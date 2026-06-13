@@ -927,8 +927,21 @@ Audit the repo enough to understand:
 - risky/broken areas
 - what should be done first
 
-Create one phased roadmap summary issue titled:
+Update `.rail/PROJECT.md` first. Treat it as the local project memory, roadmap, phase tracker, task direction, and local mirror for AI handoffs. Replace `CHANGE_ME` sections with as much project detail as future AI work needs:
+- product summary
+- stack
+- non-negotiables
+- current state
+- target state
+- full phased roadmap
+- current phase
+- next recommended task
+- blockers/postponed items
+
+Create or update one GitHub roadmap summary issue as the remote roadmap mirror, titled:
 Roadmap: {project_name} functional MVP
+
+Keep `.rail/PROJECT.md` and the GitHub roadmap issue aligned. Do not create `.rail/ROADMAP.md`.
 
 Structure the roadmap into phases. Example phase styles:
 - Phase 1 - Foundation / cleanup / truth alignment
@@ -974,11 +987,11 @@ Each implementation issue must include this body template:
 - Stop and explain if this requires broader architecture changes.
 
 Task-writing rules:
-- Each issue should be doable in one focused coding session.
+- One issue should fit one focused coding-agent session.
 - Each issue should usually touch a small set of related files.
 - Each issue should have enough detail that `rail next --copy` can be pasted directly into a coding agent without re-explaining the project.
-- Do not create tasks so small they waste overhead.
-- Do not create tasks so large they invite drift.
+- Do not create tiny noisy micro-tasks.
+- Do not create huge phase-sized tasks.
 - Do not bundle unrelated UI, backend, docs, and config changes into one issue.
 - If a phase is large, split it into several scoped issues.
 - If the coding agent would need to make architecture decisions, create a planning/audit issue first instead of a coding issue.
@@ -989,6 +1002,7 @@ Do not:
 - open PRs
 - create more than 12 first-batch issues
 - create vague or huge issues
+- create `.rail/ROADMAP.md`
 
 After the roadmap and issues exist, the human will run:
 
@@ -1013,6 +1027,8 @@ Repository: {repository}
 Inspect the repo and GitHub Issues. Find the roadmap issue, usually titled like:
 Roadmap: {project_name} functional MVP
 
+Treat `.rail/PROJECT.md` as the local project memory, roadmap, phase tracker, and next-task direction file. Keep it aligned with the GitHub roadmap issue. Do not create `.rail/ROADMAP.md`.
+
 Identify:
 - current phase
 - completed/closed issues in that phase
@@ -1020,6 +1036,7 @@ Identify:
 - shipped work since the last phase audit
 
 Audit whether the phase is really complete. Check for:
+- whether completed issues really satisfy the phase completion criteria
 - scope drift
 - incomplete tasks
 - broken assumptions
@@ -1030,7 +1047,9 @@ Audit whether the phase is really complete. Check for:
 - roadmap mismatch
 
 If the phase is complete:
-- mark or recommend the phase as complete in the roadmap issue
+- mark completed tasks/phases in `.rail/PROJECT.md`
+- update completed work, current phase, next recommended task, and blockers/postponed work in `.rail/PROJECT.md`
+- mark or recommend the phase as complete in the GitHub roadmap issue
 - recommend or create the next small batch of issues for the next phase
 - keep new issues right-sized for coding agents
 
@@ -1038,6 +1057,8 @@ If the phase is not complete:
 - list remaining blockers
 - create or update only scoped blocker issues
 - do not start the next phase yet
+
+Review upcoming phases and decide whether the roadmap is still correct. If it is off-track, update upcoming phases in `.rail/PROJECT.md` and the GitHub roadmap issue, then clearly tell the user what changed and why.
 
 Right-sized issue rules:
 - one focused coding session
@@ -1053,6 +1074,7 @@ Do not:
 - open PRs
 - close roadmap phases unless the audit supports it
 - silently create unrelated tasks
+- create `.rail/ROADMAP.md`
 
 Implementation still happens one issue at a time through:
 

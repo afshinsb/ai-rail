@@ -15,6 +15,8 @@ Do not create unrelated roadmaps or task folders.
 
 Do not silently update the roadmap or create extra tasks unless the planning or phase prompt asks.
 
+Treat `.rail/PROJECT.md` as local project memory and next-task direction. GitHub Issues remain the task execution layer.
+
 Do not rewrite architecture unless the issue explicitly asks.
 
 Do not commit.

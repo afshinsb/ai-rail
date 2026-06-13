@@ -12,7 +12,7 @@
 
 Do not manually invent prompts when AI Rail can generate them.
 
-`.rail/PROJECT.md` is project truth. GitHub Issues are task truth. The roadmap issue is phase truth. Coding happens one issue at a time; phase audit happens after several shipped issues and is not coding.
+`.rail/PROJECT.md` is local project memory, roadmap, phase tracker, next-task direction, and local mirror for AI handoffs. GitHub Issues are the task execution layer. The GitHub roadmap issue is the remote roadmap mirror. Coding happens one issue at a time; phase audit happens after several shipped issues and is not coding.
 
 ## Model 1: Codex-Based
 

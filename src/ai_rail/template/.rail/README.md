@@ -8,14 +8,15 @@ It turns GitHub Issues into controlled loops:
 Issue -> Start -> Prompt -> Edit/Patch/AI-direct -> Review -> Checks -> Audit -> Commit/PR -> Close -> Done -> Sync/Pull
 ```
 
-## Project, task, and phase truth
+## Local project memory
 
-- `.rail/PROJECT.md` is project truth.
-- GitHub Issues are task truth.
-- The roadmap issue is phase truth.
+- `.rail/PROJECT.md` is local project memory, roadmap, phase tracker, next-task direction, and the local mirror for AI handoffs.
+- GitHub Issues are the task execution layer.
+- The GitHub roadmap issue is the remote roadmap mirror.
 - `rail plan --copy` creates the planning prompt before scoped issues exist.
 - `rail phase --copy` creates the phase-audit prompt after several shipped issues.
 - Coding happens one issue at a time through `rail next --copy`.
+- After meaningful task completion, project memory should eventually reflect what shipped and what should happen next.
 
 Coding agents should not silently update the roadmap or create extra tasks unless the planning or phase prompt asks for that.
 

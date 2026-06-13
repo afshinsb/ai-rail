@@ -122,7 +122,7 @@ rail plan --copy
 # paste into a GitHub-connected AI agent
 ```
 
-The AI creates a phased roadmap and small GitHub Issues.
+The AI fills `.rail/PROJECT.md` as local project memory, creates or updates a GitHub roadmap issue as the remote roadmap mirror, and creates small GitHub Issues for task execution.
 
 Then work one issue at a time:
 
@@ -142,6 +142,8 @@ After several shipped issues, audit and update the phase:
 rail phase --copy
 # paste into a GitHub-connected AI reviewer/agent
 ```
+
+The phase audit updates project memory, checks completed work against the roadmap, and adjusts upcoming phases when needed.
 
 Then continue:
 
@@ -214,6 +216,8 @@ Common aliases are thin wrappers over the long commands: `rail r` for `resume`, 
 Detailed commands such as `rail start`, `rail prompt`, `rail review`, `rail checks`, `rail commit`, `rail issue-close`, `rail done`, and `rail sync` remain available for manual control.
 
 ## Portable Project Brain
+
+`.rail/PROJECT.md` is the local project memory, roadmap brain, phase tracker, and next-task direction file. GitHub Issues are the task execution layer, and the GitHub roadmap issue is the remote roadmap mirror.
 
 `rail snapshot` writes:
 

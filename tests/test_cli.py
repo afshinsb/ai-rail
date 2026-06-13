@@ -226,6 +226,33 @@ def test_template_makefile_exposes_current_daily_workflow() -> None:
     assert "$(r) export --dry-run" in text
 
 
+def test_project_template_defines_local_project_memory() -> None:
+    text = (ROOT / "src" / "ai_rail" / "template" / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+
+    assert "# Project Memory" in text
+    assert "local AI Rail project memory" in text
+    assert "## Current state" in text
+    assert "## Target state" in text
+    assert "## Phased roadmap" in text
+    assert "## Current phase" in text
+    assert "## Next recommended task" in text
+    assert "## Completed work" in text
+    assert "## Roadmap maintenance rules" in text
+    assert "Do not create `.rail/ROADMAP.md`" in text
+
+
+def test_user_docs_do_not_introduce_rail_roadmap_file() -> None:
+    docs = [
+        ROOT / "README.md",
+        ROOT / "docs" / "QUICKSTART.md",
+        ROOT / "docs" / "COMMANDS.md",
+        ROOT / "docs" / "WORKFLOWS.md",
+    ]
+
+    for path in docs:
+        assert ".rail/ROADMAP.md" not in path.read_text(encoding="utf-8")
+
+
 def test_detect_repo_falls_back_to_git_remote_when_gh_is_missing(tmp_path: Path, monkeypatch) -> None:
     git_init(tmp_path)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
@@ -276,6 +303,13 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stderr + result.stdout
     assert "Project: Road Demo" in result.stdout
     assert "Repository: owner/road-demo" in result.stdout
+    assert "`.rail/PROJECT.md`" in result.stdout
+    assert "local project memory" in result.stdout
+    assert "Replace `CHANGE_ME`" in result.stdout
+    assert "current state" in result.stdout
+    assert "target state" in result.stdout
+    assert "full phased roadmap" in result.stdout
+    assert "next recommended task" in result.stdout
     assert "phased" in result.stdout.lower()
     assert "Roadmap: Road Demo functional MVP" in result.stdout
     assert "no more than 12 issues" in result.stdout
@@ -286,7 +320,12 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert "## Files likely touched" in result.stdout
     assert "## Acceptance checks" in result.stdout
     assert "## AI/Codex rules" in result.stdout
-    assert "one focused coding session" in result.stdout
+    assert "One issue should fit one focused coding-agent session" in result.stdout
+    assert "tiny noisy micro-tasks" in result.stdout
+    assert "huge phase-sized tasks" in result.stdout
+    assert "Do not bundle unrelated UI, backend, docs, and config changes" in result.stdout
+    assert "create a planning/audit issue first" in result.stdout
+    assert "`.rail/ROADMAP.md`" in result.stdout
     assert "rail n" in result.stdout
     assert "rail v" in result.stdout
     assert 'rail s "type(scope): message"' in result.stdout
@@ -308,6 +347,12 @@ def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) ->
     assert result.returncode == 0, result.stderr + result.stdout
     assert "Roadmap: Phase Demo functional MVP" in result.stdout
     assert "phase-audit agent" in result.stdout
+    assert "update completed work, current phase, next recommended task" in result.stdout
+    assert "mark completed tasks/phases in `.rail/PROJECT.md`" in result.stdout
+    assert "Review upcoming phases" in result.stdout
+    assert "off-track" in result.stdout
+    assert "tell the user what changed and why" in result.stdout
+    assert "`.rail/ROADMAP.md`" in result.stdout
     assert "completed/closed issues" in result.stdout
     assert "remaining blockers" in result.stdout
     assert "next phase recommendation" in result.stdout

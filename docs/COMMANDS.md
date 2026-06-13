@@ -2,6 +2,8 @@
 
 ## Daily Commands
 
+`.rail/PROJECT.md` is local project memory and roadmap brain. GitHub Issues are the task execution layer, and the GitHub roadmap issue is the remote roadmap mirror.
+
 | Command | Purpose |
 |---|---|
 | `rail init` | Install AI Rail files into the current repo |

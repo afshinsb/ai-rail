@@ -52,6 +52,7 @@ rail plan --copy
 ```
 
 That AI should create a phased roadmap issue and a first batch of small implementation issues.
+It should also fill `.rail/PROJECT.md` as local project memory: product, stack, current state, target state, phased roadmap, blockers, and next recommended task.
 
 ```bash
 rail next --copy
@@ -67,6 +68,8 @@ After several shipped issues, audit and update the roadmap phase:
 rail phase --copy
 # paste into a GitHub-connected AI reviewer/agent
 ```
+
+Phase audit updates `.rail/PROJECT.md`, keeps the GitHub roadmap issue aligned, and recommends the next phase or blocker issue. `rail next` still starts one task at a time.
 
 See [WORKFLOWS.md](WORKFLOWS.md) for the Codex-based, patch-based, and AI-direct interaction models.
 
