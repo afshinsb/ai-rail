@@ -40,6 +40,32 @@ def ship_without_remote(path: Path, message: str, *extra_args: str) -> subproces
     return run_cli(path, "ship", message, "--no-push", "--no-close", "--no-done", "--no-sync", *extra_args)
 
 
+def install_fake_gh(path: Path, monkeypatch, *, open_issues: list[dict], closed_issues: list[dict] | None = None) -> None:
+    fake_dir = path / "fake-bin"
+    fake_dir.mkdir()
+    script = fake_dir / "fake_gh.py"
+    script.write_text(
+        "import json, sys\n"
+        f"open_issues = {json.dumps(open_issues)!r}\n"
+        f"closed_issues = {json.dumps(closed_issues or [])!r}\n"
+        "args = sys.argv[1:]\n"
+        "if args[:2] == ['issue', 'list']:\n"
+        "    state = args[args.index('--state') + 1] if '--state' in args else 'open'\n"
+        "    print(open_issues if state == 'open' else closed_issues)\n"
+        "    raise SystemExit(0)\n"
+        "print('unsupported gh call: ' + ' '.join(args), file=sys.stderr)\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    shim = f"@echo off\r\n{sys.executable} \"{script}\" %*\r\n"
+    (fake_dir / "gh.cmd").write_text(shim, encoding="utf-8")
+    (fake_dir / "gh.bat").write_text(shim, encoding="utf-8")
+    path_keys = [key for key in ENV if key.lower() == "path"] or ["PATH"]
+    for key in path_keys:
+        monkeypatch.setitem(ENV, key, str(fake_dir))
+    monkeypatch.setitem(ENV, "PATH", str(fake_dir))
+
+
 def test_init_creates_node_config_with_check(tmp_path: Path) -> None:
     git_init(tmp_path)
     result = run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Demo")
@@ -230,12 +256,13 @@ def test_project_template_defines_local_project_memory() -> None:
     text = (ROOT / "src" / "ai_rail" / "template" / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
 
     assert "# Project Memory" in text
-    assert "local AI Rail project memory" in text
+    assert "local AI Rail project memory and roadmap brain" in text
+    assert "AI RAIL MANAGED ROADMAP START" in text
     assert "## Current state" in text
     assert "## Target state" in text
-    assert "## Phased roadmap" in text
-    assert "## Current phase" in text
-    assert "## Next recommended task" in text
+    assert "## Phases" in text
+    assert "## Active execution queue" in text
+    assert "## Next recommended issue" in text
     assert "## Completed work" in text
     assert "## Roadmap maintenance rules" in text
     assert "Do not create `.rail/ROADMAP.md`" in text
@@ -305,14 +332,17 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert "Repository: owner/road-demo" in result.stdout
     assert "`.rail/PROJECT.md`" in result.stdout
     assert "local project memory" in result.stdout
-    assert "Replace `CHANGE_ME`" in result.stdout
+    assert "AI RAIL PROJECT MEMORY START" in result.stdout
+    assert "run `rail import` locally" in result.stdout
+    assert "Do not edit `.rail/PROJECT.md` remotely" in result.stdout
     assert "current state" in result.stdout
     assert "target state" in result.stdout
     assert "full phased roadmap" in result.stdout
-    assert "next recommended task" in result.stdout
+    assert "next recommended issue/task" in result.stdout
     assert "phased" in result.stdout.lower()
     assert "Roadmap: Road Demo functional MVP" in result.stdout
-    assert "no more than 12 issues" in result.stdout
+    assert "usually 3-10 right-sized implementation issues" in result.stdout
+    assert "do not create GitHub issues for the entire long-term roadmap" in result.stdout
     assert "## Goal" in result.stdout
     assert "## Current problem" in result.stdout
     assert "## Scope" in result.stdout
@@ -325,7 +355,7 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert "huge phase-sized tasks" in result.stdout
     assert "Do not bundle unrelated UI, backend, docs, and config changes" in result.stdout
     assert "create a planning/audit issue first" in result.stdout
-    assert "`.rail/ROADMAP.md`" in result.stdout
+    assert ".rail/ROADMAP.md" not in result.stdout
     assert "rail n" in result.stdout
     assert "rail v" in result.stdout
     assert 'rail s "type(scope): message"' in result.stdout
@@ -347,17 +377,20 @@ def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) ->
     assert result.returncode == 0, result.stderr + result.stdout
     assert "Roadmap: Phase Demo functional MVP" in result.stdout
     assert "phase-audit agent" in result.stdout
-    assert "update completed work, current phase, next recommended task" in result.stdout
-    assert "mark completed tasks/phases in `.rail/PROJECT.md`" in result.stdout
+    assert "AI RAIL PROJECT MEMORY START" in result.stdout
+    assert "run `rail import` locally" in result.stdout
+    assert "update completed work, current phase, next recommended issue" in result.stdout
+    assert "mark completed tasks/phases in the roadmap issue memory block" in result.stdout
     assert "Review upcoming phases" in result.stdout
     assert "off-track" in result.stdout
     assert "tell the user what changed and why" in result.stdout
-    assert "`.rail/ROADMAP.md`" in result.stdout
+    assert "do not edit `.rail/PROJECT.md` remotely" in result.stdout
+    assert ".rail/ROADMAP.md" not in result.stdout
     assert "completed/closed issues" in result.stdout
     assert "remaining blockers" in result.stdout
     assert "next phase recommendation" in result.stdout
     assert "one focused coding session" in result.stdout
-    assert "rail n -> coding agent -> rail v -> AI reviewer -> rail s" in result.stdout
+    assert "rail n -> coding agent -> rail v -> reviewer -> rail s" in result.stdout
 
 
 def test_phase_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
@@ -365,6 +398,159 @@ def test_phase_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "GitHub-connected phase-audit agent" in result.stdout
+
+
+def test_import_fails_before_init(tmp_path: Path) -> None:
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 1
+    assert "No .rail folder found. Run: rail init" in result.stderr
+
+
+def test_import_help_exists() -> None:
+    result = run_cli(ROOT, "import", "--help")
+
+    assert result.returncode == 0
+    assert "usage: rail import" in result.stdout
+
+
+def test_import_fails_without_detected_repo(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    run_cli(tmp_path, "init", "--stack", "static")
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[])
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 1
+    assert "Could not detect GitHub repository" in result.stderr
+
+
+def test_import_fails_without_roadmap_issue(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 2, "title": "Build thing", "body": "", "updatedAt": "2026-01-01T00:00:00Z"}])
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 1
+    assert "No open roadmap issue found. Run `rail plan --copy` first." in result.stderr
+
+
+def test_import_extracts_managed_memory_and_writes_project(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    body = "intro\n<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n- [ ] #2 Build thing\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(
+        tmp_path,
+        monkeypatch,
+        open_issues=[
+            {"number": 1, "title": "Roadmap: Demo functional MVP", "body": body, "updatedAt": "2026-01-02T00:00:00Z"},
+            {"number": 2, "title": "Build thing", "body": "", "updatedAt": "2026-01-01T00:00:00Z"},
+        ],
+        closed_issues=[{"number": 3, "title": "Done thing", "body": "", "updatedAt": "2026-01-01T00:00:00Z"}],
+    )
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "AI RAIL MANAGED ROADMAP START" in text
+    assert "## Roadmap" in text
+    assert "- [ ] #2 Build thing" in text
+    assert not (tmp_path / ".rail" / "ROADMAP.md").exists()
+    assert "Open issues: 1" in result.stdout
+    assert "Closed issues: 1" in result.stdout
+
+
+def test_import_preserves_user_content_outside_managed_markers(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    project = tmp_path / ".rail" / "PROJECT.md"
+    project.write_text("# Human notes\n\nkeep me\n\n<!-- AI RAIL MANAGED ROADMAP START -->\nold\n<!-- AI RAIL MANAGED ROADMAP END -->\n\nfooter\n", encoding="utf-8")
+    body = "<!-- AI RAIL PROJECT MEMORY START -->\nnew roadmap\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = project.read_text(encoding="utf-8")
+    assert "keep me" in text
+    assert "footer" in text
+    assert "new roadmap" in text
+    assert "old" not in text
+
+
+def test_next_does_not_import_and_warns_on_placeholders(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    run_cli(tmp_path, "init", "--stack", "static")
+    rail = tmp_path / ".rail" / "rail.py"
+    rail.write_text(
+        "import sys\n"
+        "print('fake ' + sys.argv[1])\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    before = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+
+    result = run_cli(tmp_path, "next", "--no-prompt", "--no-branch")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Project memory has placeholders. Run `rail import` after planning." in result.stdout
+    assert (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8") == before
+
+
+def test_next_warns_when_no_open_implementation_issue(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    run_cli(tmp_path, "init", "--stack", "static")
+    rail = tmp_path / ".rail" / "rail.py"
+    rail.write_text(
+        "import sys\n"
+        "print('Error: No open implementation issues found.')\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+
+    result = run_cli(tmp_path, "next", "--no-prompt", "--no-branch")
+
+    assert result.returncode == 1
+    assert "No open implementation issues found." in result.stdout
+    assert "Run `rail phase --copy`" in result.stdout
+
+
+def test_ship_marks_project_task_complete(tmp_path: Path) -> None:
+    rail = tmp_path / ".rail" / "rail.py"
+    rail.parent.mkdir(parents=True)
+    rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
+    state = tmp_path / ".rail" / "state"
+    state.mkdir()
+    (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL MANAGED ROADMAP START -->\n## Completed work\n\n## Active execution queue\n\n- [ ] #2 Build thing\n<!-- AI RAIL MANAGED ROADMAP END -->\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "- [x] #2 Build thing" in text
+    assert "Updated .rail/PROJECT.md" in result.stdout
+
+
+def test_ship_does_not_fail_if_project_update_fails(tmp_path: Path) -> None:
+    rail = tmp_path / ".rail" / "rail.py"
+    rail.parent.mkdir(parents=True)
+    rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
+    state = tmp_path / ".rail" / "state"
+    state.mkdir()
+    (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
+    project = tmp_path / ".rail" / "PROJECT.md"
+    project.mkdir()
+
+    result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Could not update .rail/PROJECT.md after ship" in result.stdout
 
 
 def test_model_guard_codex_refuses_on_patch(tmp_path: Path) -> None:
@@ -479,7 +665,7 @@ def test_delegated_output_rewrites_inline_o_alias() -> None:
 def test_help_lists_short_daily_commands() -> None:
     result = run_cli(ROOT, "--help")
     assert result.returncode == 0
-    assert "Daily: init, resume, plan, phase, next, handoff, verify, ship, snapshot, export" in result.stdout
+    assert "Daily: init, resume, plan, import, phase, next, handoff, verify, ship, snapshot, export" in result.stdout
 
 
 def test_phase3_commit_requires_review_before_shipping(tmp_path: Path) -> None:
@@ -955,7 +1141,7 @@ def test_phase6_help_lists_public_phase_commands() -> None:
     assert "demo" in result.stdout
     assert "release-check" in result.stdout
     assert "upgrade" in result.stdout
-    assert "Aliases: r, n, p, ph, v, s, snap, h, hc, hg, hl, x, xd, xf, rc" in result.stdout
+    assert "Aliases: r, n, p, ph, im, v, s, snap, h, hc, hg, hl, x, xd, xf, rc" in result.stdout
 
 
 def test_alias_expansion_table_matches_documented_shortcuts() -> None:
@@ -967,6 +1153,7 @@ def test_alias_expansion_table_matches_documented_shortcuts() -> None:
         ("n",): ["next", "--copy"],
         ("p",): ["plan", "--copy"],
         ("ph",): ["phase", "--copy"],
+        ("im",): ["import"],
         ("v",): ["verify", "--copy"],
         ("s", "test: msg"): ["ship", "test: msg"],
         ("snap",): ["snapshot"],

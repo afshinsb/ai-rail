@@ -2,7 +2,7 @@
 
 ## Daily Commands
 
-`.rail/PROJECT.md` is local project memory and roadmap brain. GitHub Issues are the task execution layer, and the GitHub roadmap issue is the remote roadmap mirror.
+`.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
 | Command | Purpose |
 |---|---|
@@ -11,6 +11,7 @@
 | `rail doctor` | Check setup, placeholders, and required AI contract files |
 | `rail resume` | Show active state and workflow position |
 | `rail plan` | Generate a GitHub-connected AI prompt to create a phased issue roadmap |
+| `rail import` | Import the GitHub roadmap issue memory into local `.rail/PROJECT.md` |
 | `rail phase` | Generate a GitHub-connected AI prompt to audit/update the current roadmap phase |
 | `rail next` | Start the next issue and generate the first prompt |
 | `rail handoff` | Generate model-specific portable context |
@@ -29,6 +30,7 @@ Aliases are thin wrappers over existing commands.
 | `rail n` | `rail next --copy` |
 | `rail p` | `rail plan --copy` |
 | `rail ph` | `rail phase --copy` |
+| `rail im` | `rail import` |
 | `rail v` | `rail verify --copy` |
 | `rail s` | `rail ship` |
 | `rail snap` | `rail snapshot` |

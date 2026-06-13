@@ -27,6 +27,10 @@ LAST_REVIEW_PATH = STATE_DIR / "last-review.md"
 LAST_CHECKS_PATH = STATE_DIR / "last-checks.md"
 LAST_CODEX_PROMPT_PATH = STATE_DIR / "last-codex-prompt.md"
 LAST_REVIEW_PROMPT_PATH = STATE_DIR / "last-chatgpt-review-prompt.md"
+REMOTE_MEMORY_START = "<!-- AI RAIL PROJECT MEMORY START -->"
+REMOTE_MEMORY_END = "<!-- AI RAIL PROJECT MEMORY END -->"
+LOCAL_ROADMAP_START = "<!-- AI RAIL MANAGED ROADMAP START -->"
+LOCAL_ROADMAP_END = "<!-- AI RAIL MANAGED ROADMAP END -->"
 
 
 ISSUE_TEMPLATE = """## Goal
@@ -389,6 +393,119 @@ def planning_identity() -> tuple[str, str]:
     return project_name, str(repository)
 
 
+def fetch_github_issues(repo: str, state_value: str, limit: int = 100) -> list[dict[str, Any]]:
+    gh = shutil.which("gh") or "gh"
+    result = run([
+        gh, "issue", "list",
+        "--repo", repo,
+        "--state", state_value,
+        "--limit", str(limit),
+        "--json", "number,title,body,updatedAt,state",
+    ], timeout=45)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "GitHub issue list failed.")
+    return json.loads(result.stdout or "[]")
+
+
+def roadmap_issue_from_open_issues(open_issues: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
+    roadmap = [item for item in open_issues if "roadmap:" in str(item.get("title", "")).lower()]
+    if not roadmap:
+        return None, False
+    roadmap = sorted(roadmap, key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
+    return roadmap[0], len(roadmap) > 1
+
+
+def extract_remote_memory(body: str) -> str | None:
+    if REMOTE_MEMORY_START not in body or REMOTE_MEMORY_END not in body:
+        return None
+    return body.split(REMOTE_MEMORY_START, 1)[1].split(REMOTE_MEMORY_END, 1)[0].strip()
+
+
+def render_managed_roadmap_from_issue(roadmap: dict[str, Any], open_issues: list[dict[str, Any]], closed_issues: list[dict[str, Any]]) -> str:
+    body = str(roadmap.get("body") or "").strip() or "_No roadmap body captured._"
+    open_impl = [item for item in open_issues if item.get("number") != roadmap.get("number")]
+    open_lines = "\n".join(f"- [ ] #{item.get('number')} {item.get('title')}" for item in open_impl) or "- None"
+    closed_lines = "\n".join(f"- [x] #{item.get('number')} {item.get('title')}" for item in closed_issues) or "- None"
+    next_issue = open_impl[0] if open_impl else None
+    next_line = f"#{next_issue.get('number')} {next_issue.get('title')}" if next_issue else "None"
+    return f"""## Roadmap
+
+Imported from GitHub roadmap issue #{roadmap.get('number')}: {roadmap.get('title')}
+
+## Roadmap issue body
+
+{body}
+
+## Active execution queue
+
+{open_lines}
+
+## Completed work
+
+{closed_lines}
+
+## Next recommended issue
+
+{next_line}
+"""
+
+
+def project_memory_template(managed: str) -> str:
+    return f"""# Project Memory
+
+This file is the local AI Rail project memory and roadmap brain.
+
+GitHub Issues are the active task execution queue.
+The GitHub roadmap issue is the remote roadmap mirror.
+AI/planning agents create and update the roadmap.
+AI Rail imports roadmap memory and tracks completed issue state.
+
+## Product notes
+
+CHANGE_ME: What does this project do?
+
+## Stack
+
+CHANGE_ME: Main technologies, framework, runtime, database, deployment target.
+
+## Non-negotiables
+
+CHANGE_ME: Constraints, architecture rules, safety rules, and things AI must not break.
+
+{LOCAL_ROADMAP_START}
+
+{managed.strip()}
+
+{LOCAL_ROADMAP_END}
+
+## Roadmap maintenance rules
+
+- Keep the full roadmap here.
+- Keep only the active execution slice as GitHub implementation issues.
+- Do not create `.rail/ROADMAP.md`.
+- Do not use GitHub Issues for the entire 100-task roadmap.
+- Use `rail import` after `rail plan --copy` or `rail phase --copy`.
+- Use `rail s` to ship/close one issue and mark it completed locally.
+"""
+
+
+def update_local_project_memory(managed: str) -> None:
+    new_block = f"{LOCAL_ROADMAP_START}\n\n{managed.strip()}\n\n{LOCAL_ROADMAP_END}"
+    if not PROJECT_PATH.exists():
+        write_text(PROJECT_PATH, project_memory_template(managed))
+        return
+    existing = read_text(PROJECT_PATH)
+    if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
+        before = existing.split(LOCAL_ROADMAP_START, 1)[0].rstrip()
+        after = existing.split(LOCAL_ROADMAP_END, 1)[1].lstrip()
+        write_text(PROJECT_PATH, f"{before}\n\n{new_block}\n\n{after}")
+        return
+    if "CHANGE_ME" in existing and len(existing.strip()) < 2500:
+        write_text(PROJECT_PATH, project_memory_template(managed))
+        return
+    write_text(PROJECT_PATH, existing.rstrip() + "\n\n" + new_block + "\n")
+
+
 def default_branch() -> str:
     cfg = load_config()
     if cfg.get("default_branch"):
@@ -451,6 +568,7 @@ def fetch_issue(issue_ref: str) -> dict[str, Any]:
             timeout=45,
         )
         issues = json.loads(result.stdout or "[]") if result.returncode == 0 else []
+        issues = [item for item in issues if "roadmap:" not in str(item.get("title", "")).lower()]
         if not issues:
             result = run(
                 [
@@ -464,9 +582,10 @@ def fetch_issue(issue_ref: str) -> dict[str, Any]:
                 check=True,
             )
             issues = json.loads(result.stdout or "[]")
+            issues = [item for item in issues if "roadmap:" not in str(item.get("title", "")).lower()]
             issues = sorted(issues, key=lambda item: int(item["number"]))
         if not issues:
-            raise RuntimeError("No open GitHub issues found for `next`.")
+            raise RuntimeError("No open implementation issues found.")
         issue = issues[0]
     else:
         issue_number = int(issue_ref)
@@ -927,21 +1046,32 @@ Audit the repo enough to understand:
 - risky/broken areas
 - what should be done first
 
-Update `.rail/PROJECT.md` first. Treat it as the local project memory, roadmap, phase tracker, task direction, and local mirror for AI handoffs. Replace `CHANGE_ME` sections with as much project detail as future AI work needs:
+Create or update one GitHub roadmap issue as the remote roadmap mirror, titled:
+Roadmap: {project_name} functional MVP
+
+Put the full roadmap/project memory inside the roadmap issue body. Include this exact managed block:
+
+{REMOTE_MEMORY_START}
+...
+{REMOTE_MEMORY_END}
+
+Inside that block, include:
 - product summary
 - stack
 - non-negotiables
 - current state
 - target state
 - full phased roadmap
+- phase goals
+- completion criteria
+- future tasks/backlog
 - current phase
-- next recommended task
+- active execution queue
+- completed work if known
 - blockers/postponed items
+- next recommended issue/task
 
-Create or update one GitHub roadmap summary issue as the remote roadmap mirror, titled:
-Roadmap: {project_name} functional MVP
-
-Keep `.rail/PROJECT.md` and the GitHub roadmap issue aligned. Do not create `.rail/ROADMAP.md`.
+AI Rail treats `.rail/PROJECT.md` as the local project memory and roadmap brain, but you should update the GitHub roadmap issue first. Do not edit `.rail/PROJECT.md` remotely unless the user explicitly asks.
 
 Structure the roadmap into phases. Example phase styles:
 - Phase 1 - Foundation / cleanup / truth alignment
@@ -951,8 +1081,9 @@ Structure the roadmap into phases. Example phase styles:
 
 Do not force those exact phase names; choose phases that fit this repo.
 
-Create the first batch of implementation-ready GitHub Issues:
-- no more than 12 issues in the first batch
+Create only the first active execution slice as implementation-ready GitHub Issues:
+- usually 3-10 right-sized implementation issues
+- do not create GitHub issues for the entire long-term roadmap
 - small enough for one focused coding-agent pass
 - big enough to be meaningful
 - not tiny/noisy micro-tasks
@@ -989,7 +1120,7 @@ Each implementation issue must include this body template:
 Task-writing rules:
 - One issue should fit one focused coding-agent session.
 - Each issue should usually touch a small set of related files.
-- Each issue should have enough detail that `rail next --copy` can be pasted directly into a coding agent without re-explaining the project.
+- Each issue should have enough detail that `rail n` can pass it to a coding agent without re-explaining the project.
 - Do not create tiny noisy micro-tasks.
 - Do not create huge phase-sized tasks.
 - Do not bundle unrelated UI, backend, docs, and config changes into one issue.
@@ -1000,11 +1131,14 @@ Do not:
 - implement code
 - make commits
 - open PRs
-- create more than 12 first-batch issues
+- create GitHub issues for the entire future roadmap
 - create vague or huge issues
-- create `.rail/ROADMAP.md`
 
-After the roadmap and issues exist, the human will run:
+After I create/update the roadmap issue and active execution issues, run `rail import` locally.
+AI Rail will import the roadmap issue into local `.rail/PROJECT.md`.
+Do not edit `.rail/PROJECT.md` remotely unless the user explicitly asks.
+
+After import, the human will run:
 
 rail n
 # paste generated prompt into coding agent
@@ -1027,7 +1161,13 @@ Repository: {repository}
 Inspect the repo and GitHub Issues. Find the roadmap issue, usually titled like:
 Roadmap: {project_name} functional MVP
 
-Treat `.rail/PROJECT.md` as the local project memory, roadmap, phase tracker, and next-task direction file. Keep it aligned with the GitHub roadmap issue. Do not create `.rail/ROADMAP.md`.
+Update the GitHub roadmap issue. Update the managed project-memory block inside the roadmap issue:
+
+{REMOTE_MEMORY_START}
+...
+{REMOTE_MEMORY_END}
+
+AI Rail will import that roadmap issue into local `.rail/PROJECT.md`; do not edit `.rail/PROJECT.md` remotely unless explicitly asked.
 
 Identify:
 - current phase
@@ -1047,10 +1187,10 @@ Audit whether the phase is really complete. Check for:
 - roadmap mismatch
 
 If the phase is complete:
-- mark completed tasks/phases in `.rail/PROJECT.md`
-- update completed work, current phase, next recommended task, and blockers/postponed work in `.rail/PROJECT.md`
+- mark completed tasks/phases in the roadmap issue memory block
+- update completed work, current phase, next recommended issue, and blockers/postponed work in the roadmap issue memory block
 - mark or recommend the phase as complete in the GitHub roadmap issue
-- recommend or create the next small batch of issues for the next phase
+- recommend or create only the next active execution slice for the next phase
 - keep new issues right-sized for coding agents
 
 If the phase is not complete:
@@ -1058,7 +1198,7 @@ If the phase is not complete:
 - create or update only scoped blocker issues
 - do not start the next phase yet
 
-Review upcoming phases and decide whether the roadmap is still correct. If it is off-track, update upcoming phases in `.rail/PROJECT.md` and the GitHub roadmap issue, then clearly tell the user what changed and why.
+Review upcoming phases and decide whether the roadmap is still correct. If it is off-track, update upcoming phases in the GitHub roadmap issue, then clearly tell the user what changed and why.
 
 Right-sized issue rules:
 - one focused coding session
@@ -1074,11 +1214,15 @@ Do not:
 - open PRs
 - close roadmap phases unless the audit supports it
 - silently create unrelated tasks
-- create `.rail/ROADMAP.md`
+- create issues for the entire future roadmap
+- edit `.rail/PROJECT.md` remotely unless explicitly asked
 
 Implementation still happens one issue at a time through:
 
-rail n -> coding agent -> rail v -> AI reviewer -> rail s
+rail n -> coding agent -> rail v -> reviewer -> rail s
+
+After I update the roadmap issue and active execution issues, run `rail import` locally.
+AI Rail will import the updated roadmap issue into local `.rail/PROJECT.md`.
 
 Return:
 - phase audit verdict
@@ -1108,6 +1252,42 @@ def cmd_phase(args: argparse.Namespace) -> int:
             print("\n[Copied phase-audit prompt to clipboard]")
         else:
             print("\n[Clipboard copy requested, but no supported clipboard command was found]")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    if not RAIL_DIR.exists():
+        print("No .rail folder found. Run: rail init", file=sys.stderr)
+        return 1
+    if not gh_available():
+        print("GitHub CLI `gh` is required for rail import.", file=sys.stderr)
+        return 1
+    repo = detect_repo_from_git_remote() or load_config().get("repository")
+    if repo in {None, "", "CHANGE_ME"}:
+        print("Could not detect GitHub repository. Set .rail/config.json repository or git remote origin.", file=sys.stderr)
+        return 1
+    try:
+        open_issues = fetch_github_issues(str(repo), "open")
+        roadmap, multiple = roadmap_issue_from_open_issues(open_issues)
+        if not roadmap:
+            print("No open roadmap issue found. Run `rail plan --copy` first.", file=sys.stderr)
+            return 1
+        closed_issues = fetch_github_issues(str(repo), "closed")
+        managed = extract_remote_memory(str(roadmap.get("body") or "")) or render_managed_roadmap_from_issue(roadmap, open_issues, closed_issues)
+        update_local_project_memory(managed)
+    except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
+        print(f"Import failed: {exc}", file=sys.stderr)
+        return 1
+
+    open_impl = [item for item in open_issues if item.get("number") != roadmap.get("number")]
+    next_issue = open_impl[0] if open_impl else None
+    if multiple:
+        print("[rail] Warning: multiple open roadmap issues found; imported the newest one.")
+    print("Imported roadmap into .rail/PROJECT.md.")
+    print(f"- Roadmap issue: #{roadmap.get('number')} {roadmap.get('title')}")
+    print(f"- Open issues: {len(open_impl)}")
+    print(f"- Closed issues: {len(closed_issues)}")
+    print(f"- Next open issue: #{next_issue.get('number')} {next_issue.get('title')}" if next_issue else "- Next open issue: none")
     return 0
 
 
@@ -1482,6 +1662,8 @@ def parse_args() -> argparse.Namespace:
     phase = sub.add_parser("phase", help="Print a GitHub-connected AI prompt for auditing/updating the current roadmap phase.")
     phase.add_argument("--copy", action="store_true", help="Also copy prompt to clipboard when possible.")
 
+    sub.add_parser("import", help="Import the GitHub roadmap issue memory into .rail/PROJECT.md.")
+
     review = sub.add_parser("review", help="Capture git review info.")
     review.add_argument("--max-chars", type=int, default=30000)
     review.add_argument("--full-diff", action="store_true", help="Include full git diff in last-review.md.")
@@ -1554,6 +1736,7 @@ def main() -> int:
             "prompt": cmd_prompt,
             "plan": cmd_plan,
             "phase": cmd_phase,
+            "import": cmd_import,
             "review": cmd_review,
             "checks": cmd_checks,
             "patch": cmd_patch,

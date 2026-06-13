@@ -20,7 +20,7 @@ Stop and explain if the task requires broader architecture or extra files.
 
 Use GitHub Issues as the task database.
 
-Use `.rail/PROJECT.md` as local project memory, roadmap, phase tracker, next-task direction, and local mirror for AI handoffs. Use GitHub Issues as the task execution layer and the GitHub roadmap issue as the remote roadmap mirror.
+Use `.rail/PROJECT.md` as the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
 For short command sequences, put commands directly in chat.
 

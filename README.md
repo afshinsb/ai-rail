@@ -122,7 +122,14 @@ rail plan --copy
 # paste into a GitHub-connected AI agent
 ```
 
-The AI fills `.rail/PROJECT.md` as local project memory, creates or updates a GitHub roadmap issue as the remote roadmap mirror, and creates small GitHub Issues for task execution.
+The AI creates or updates one GitHub roadmap issue as the remote roadmap mirror and creates only the first active execution slice as GitHub Issues.
+
+```bash
+rail import
+# import the roadmap issue into local .rail/PROJECT.md
+```
+
+`.rail/PROJECT.md` is the full local project memory and roadmap brain. GitHub Issues are the active task execution queue, not the entire long-term roadmap.
 
 Then work one issue at a time:
 
@@ -144,6 +151,11 @@ rail phase --copy
 ```
 
 The phase audit updates project memory, checks completed work against the roadmap, and adjusts upcoming phases when needed.
+
+```bash
+rail import
+# refresh local .rail/PROJECT.md from the updated roadmap issue
+```
 
 Then continue:
 
@@ -217,7 +229,7 @@ Detailed commands such as `rail start`, `rail prompt`, `rail review`, `rail chec
 
 ## Portable Project Brain
 
-`.rail/PROJECT.md` is the local project memory, roadmap brain, phase tracker, and next-task direction file. GitHub Issues are the task execution layer, and the GitHub roadmap issue is the remote roadmap mirror.
+`.rail/PROJECT.md` is the full local project memory, roadmap brain, phase tracker, and next-task direction file. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
 `rail snapshot` writes:
 

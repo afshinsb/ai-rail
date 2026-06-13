@@ -53,7 +53,7 @@ Small commands go directly in chat.
 
 Long commands, PowerShell here-strings, embedded Markdown, patches, JSON, or scripts must be provided as a downloadable `.txt` or `.md` file.
 
-`.rail/PROJECT.md` is local project memory, roadmap, phase tracker, next-task direction, and local mirror for AI handoffs. GitHub Issues are the task execution layer. The GitHub roadmap issue is the remote roadmap mirror.
+`.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue. Use `rail import` after planning or phase audit.
 
 Do not create root `ROADMAP.md` unless explicitly requested.
 

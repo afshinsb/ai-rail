@@ -12,14 +12,14 @@ An AI reviewer such as ChatGPT, Claude, or another LLM is the planner/reviewer/w
 
 Planning flow: `rail plan --copy` before scoped issues exist, then `rail next --copy` one issue at a time. Phase audit flow: after several shipped issues, run `rail phase --copy`; the AI reviewer audits roadmap progress and creates or recommends only right-sized next issues.
 
-`.rail/PROJECT.md` is local project memory, roadmap, phase tracker, next-task direction, and local mirror for AI handoffs. GitHub Issues are the task execution layer. The GitHub roadmap issue is the remote roadmap mirror.
+`.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue. Use `rail import` after planning or phase audit.
 
 Rules:
 
 1. Work only on the active GitHub issue or explicitly requested task.
 2. Do not create root task folders.
 3. Do not create root `ROADMAP.md`.
-4. Keep roadmap/current direction in `.rail/PROJECT.md`.
+4. Keep roadmap/current direction in the roadmap issue, then import it into `.rail/PROJECT.md`.
 5. Short terminal commands go in chat.
 6. Long commands go in downloadable `.txt` or `.md` files.
 7. AI-direct GitHub changes must always include local fetch/pull commands.

@@ -19,6 +19,8 @@ For a brand-new app, start with a roadmap prompt:
 ```bash
 rail plan --copy
 # paste into a GitHub-connected AI agent
+rail import
+# import the roadmap issue into .rail/PROJECT.md
 ```
 
 For this demo, create one sample issue directly:
@@ -43,6 +45,8 @@ rail ship "fix(api): add todo body validation"
 ```bash
 rail phase --copy
 # paste into a GitHub-connected AI reviewer/agent
+rail import
+# refresh .rail/PROJECT.md from the roadmap issue
 ```
 
 ## Export project brain

@@ -52,7 +52,13 @@ rail plan --copy
 ```
 
 That AI should create a phased roadmap issue and a first batch of small implementation issues.
-It should also fill `.rail/PROJECT.md` as local project memory: product, stack, current state, target state, phased roadmap, blockers, and next recommended task.
+It should put the full project memory and roadmap in the GitHub roadmap issue. Import that remote roadmap mirror locally:
+
+```bash
+rail import
+```
+
+`.rail/PROJECT.md` is the full local project memory and roadmap brain. GitHub Issues are only the active execution queue.
 
 ```bash
 rail next --copy
@@ -70,6 +76,11 @@ rail phase --copy
 ```
 
 Phase audit updates `.rail/PROJECT.md`, keeps the GitHub roadmap issue aligned, and recommends the next phase or blocker issue. `rail next` still starts one task at a time.
+
+```bash
+rail import
+# refresh .rail/PROJECT.md after phase planning
+```
 
 See [WORKFLOWS.md](WORKFLOWS.md) for the Codex-based, patch-based, and AI-direct interaction models.
 

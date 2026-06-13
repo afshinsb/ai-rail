@@ -10,13 +10,14 @@ Issue -> Start -> Prompt -> Edit/Patch/AI-direct -> Review -> Checks -> Audit ->
 
 ## Local project memory
 
-- `.rail/PROJECT.md` is local project memory, roadmap, phase tracker, next-task direction, and the local mirror for AI handoffs.
-- GitHub Issues are the task execution layer.
+- `.rail/PROJECT.md` is the full local project memory and roadmap brain.
 - The GitHub roadmap issue is the remote roadmap mirror.
+- GitHub implementation issues are only the active task execution queue.
 - `rail plan --copy` creates the planning prompt before scoped issues exist.
+- `rail import` imports the roadmap issue into `.rail/PROJECT.md`.
 - `rail phase --copy` creates the phase-audit prompt after several shipped issues.
 - Coding happens one issue at a time through `rail next --copy`.
-- After meaningful task completion, project memory should eventually reflect what shipped and what should happen next.
+- `rail ship` closes one issue and marks matching checklist tasks complete locally.
 
 Coding agents should not silently update the roadmap or create extra tasks unless the planning or phase prompt asks for that.
 
@@ -48,6 +49,7 @@ The coding agent should read only the allowed context files and active GitHub is
 - Coding agent prompt: `rail next --copy`
 - Reviewer prompt: `rail verify --copy`
 - Planning prompt: `rail plan --copy`
+- Roadmap import: `rail import`
 - Phase-audit prompt: `rail phase --copy`
 - New ChatGPT chat: `rail handoff --for chatgpt --copy`
 - Tool-specific handoff: `rail handoff --for codex --copy` or `rail handoff --for claude --copy`

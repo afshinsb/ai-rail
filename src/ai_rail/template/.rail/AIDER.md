@@ -10,7 +10,7 @@ Do not commit. Do not close issues. Do not create unrelated roadmaps or task fol
 
 Do not silently update the roadmap or create extra tasks unless the planning or phase prompt asks.
 
-Treat `.rail/PROJECT.md` as local project memory and next-task direction. GitHub Issues remain the task execution layer.
+Treat `.rail/PROJECT.md` as the local project memory. GitHub implementation issues are only the active execution queue; do not invent tasks.
 
 Do not read or modify `.rail/rail.py`, `.rail/state/`, or `Makefile` unless the issue is specifically about AI Rail/tooling.
 

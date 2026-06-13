@@ -4,13 +4,13 @@ AI Rail supports one daily loop and three interaction models. The short commands
 
 ## Full Lifecycle
 
-`.rail/PROJECT.md` is local project memory: product context, roadmap brain, phase tracker, and next-task direction. GitHub Issues are the task execution layer. The GitHub roadmap issue is the remote roadmap mirror.
+`.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
-Use `rail plan --copy` before the first coding issue exists. Paste it into a GitHub-connected AI agent so it can audit the repo, fill `.rail/PROJECT.md`, create one phased roadmap issue, and create a first batch of scoped GitHub Issues.
+Use `rail plan --copy` before the first coding issue exists. Paste it into a GitHub-connected AI agent so it can audit the repo, create or update one phased roadmap issue, and create only the first active execution slice as scoped GitHub Issues. Then run `rail import` to import the roadmap issue into `.rail/PROJECT.md`.
 
 Use `rail next --copy` after issues exist. It still starts one issue at a time and generates the coding-agent prompt for that single issue.
 
-After each shipped issue, project memory should eventually reflect the new task status. After several issues have shipped, use `rail phase --copy` to audit the current roadmap phase. Phase audit is not coding: the AI reviewer checks completed and open issues, updates `.rail/PROJECT.md`, keeps the roadmap issue aligned, and creates only the next right-sized blocker or phase issues.
+After `rail s`, AI Rail marks the shipped issue completed locally when it appears in `.rail/PROJECT.md`. After several issues have shipped, use `rail phase --copy` to audit the current roadmap phase. Phase audit is not coding: the planning AI updates the GitHub roadmap issue and creates only the next right-sized execution slice. Then run `rail import` again.
 
 ## Daily Loop
 
