@@ -280,6 +280,46 @@ def test_user_docs_do_not_introduce_rail_roadmap_file() -> None:
         assert ".rail/ROADMAP.md" not in path.read_text(encoding="utf-8")
 
 
+def test_readme_documents_import_command_and_alias() -> None:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "| `rail import` | Import the GitHub roadmap issue into local `.rail/PROJECT.md` |" in text
+    assert "`rail im` for `import`" in text
+
+
+def test_quickstart_phase_audit_uses_import_not_direct_local_update() -> None:
+    text = (ROOT / "docs" / "QUICKSTART.md").read_text(encoding="utf-8")
+
+    assert "Phase audit asks the planning AI to update the GitHub roadmap issue" in text
+    assert "rail import" in text
+    assert "Phase audit updates `.rail/PROJECT.md`" not in text
+
+
+def test_generated_demo_includes_import_after_plan() -> None:
+    result = run_cli(ROOT, "demo")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    plan_pos = result.stdout.index("rail plan --copy")
+    import_pos = result.stdout.index("rail import", plan_pos)
+    assert import_pos > plan_pos
+
+
+def test_roadmap_docs_describe_import_workflow_not_stale_a6_future() -> None:
+    text = (ROOT / "docs" / "ROADMAP.md").read_text(encoding="utf-8")
+
+    assert "0.1.0a11: Import-Based Roadmap Workflow" in text
+    assert "`rail import` imports the GitHub roadmap issue into local `.rail/PROJECT.md`" in text
+    assert "GitHub implementation issues are only the active execution queue" in text
+    assert "Optional roadmap-to-issues helper" not in text
+
+
+def test_architecture_mentions_plan_import_and_phase() -> None:
+    text = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
+
+    assert "roadmap workflow commands: `plan`, `import`, and `phase`" in text
+    assert "`rail import` is a deterministic one-way import" in text
+
+
 def test_detect_repo_falls_back_to_git_remote_when_gh_is_missing(tmp_path: Path, monkeypatch) -> None:
     git_init(tmp_path)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
@@ -534,7 +574,36 @@ def test_ship_marks_project_task_complete(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr + result.stdout
     text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
     assert "- [x] #2 Build thing" in text
-    assert "Updated .rail/PROJECT.md" in result.stdout
+    assert "Updated .rail/PROJECT.md for completed issue" in result.stdout
+
+
+def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path) -> None:
+    rail = tmp_path / ".rail" / "rail.py"
+    rail.parent.mkdir(parents=True)
+    rail.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "cmd = sys.argv[1]\n"
+        "Path('.rail/calls.txt').open('a', encoding='utf-8').write(cmd + '\\n')\n"
+        "if cmd == 'commit' and '- [x] #2 Build thing' not in Path('.rail/PROJECT.md').read_text(encoding='utf-8'):\n"
+        "    print('project not marked before commit')\n"
+        "    raise SystemExit(2)\n"
+        "print('fake ' + cmd)\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    state = tmp_path / ".rail" / "state"
+    state.mkdir()
+    (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("## Completed work\n\n## Active execution queue\n\n- [ ] #2 Build thing\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "ship", "test: ship", "--no-push")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    calls = (tmp_path / ".rail" / "calls.txt").read_text(encoding="utf-8").splitlines()
+    assert calls == ["commit", "issue-close", "done", "sync"]
+    assert calls.count("commit") == 1
+    assert "- [x] #2 Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
 
 
 def test_ship_does_not_fail_if_project_update_fails(tmp_path: Path) -> None:
@@ -550,7 +619,7 @@ def test_ship_does_not_fail_if_project_update_fails(tmp_path: Path) -> None:
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync")
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "Could not update .rail/PROJECT.md after ship" in result.stdout
+    assert "Warning: could not update .rail/PROJECT.md before ship" in result.stdout
 
 
 def test_model_guard_codex_refuses_on_patch(tmp_path: Path) -> None:

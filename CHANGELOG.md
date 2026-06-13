@@ -6,8 +6,12 @@ Maintained by Afshin Saberi.
 
 - Added `rail plan` to generate a GitHub-connected AI prompt for phased roadmap creation.
 - Added `rail phase` to generate a GitHub-connected AI prompt for phase audits and roadmap updates.
-- Added aliases `rail p` and `rail ph`.
-- Updated README, quickstart, commands, workflows, demo, and installed template guidance for the full phased workflow.
+- Added `rail import` / `rail im` for one-way GitHub roadmap issue -> local `.rail/PROJECT.md` import.
+- Added AI Rail project-memory managed block markers for roadmap import.
+- Added aliases `rail p`, `rail ph`, and `rail im`.
+- Changed planning/phase prompts to treat GitHub issues as the active execution queue only.
+- Added `.rail/PROJECT.md` completion marking on `rail ship`.
+- Updated README, quickstart, commands, workflows, demo, and installed template guidance for the import-based roadmap workflow.
 - Added planning-agent rules for right-sized implementation issues.
 - No breaking changes.
 

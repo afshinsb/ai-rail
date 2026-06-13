@@ -75,7 +75,7 @@ rail phase --copy
 # paste into a GitHub-connected AI reviewer/agent
 ```
 
-Phase audit updates `.rail/PROJECT.md`, keeps the GitHub roadmap issue aligned, and recommends the next phase or blocker issue. `rail next` still starts one task at a time.
+Phase audit asks the planning AI to update the GitHub roadmap issue and next execution slice. `rail next` still starts one task at a time.
 
 ```bash
 rail import

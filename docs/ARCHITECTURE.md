@@ -6,7 +6,7 @@ AI Rail has two layers: the installable public CLI and the repo-local runtime co
 
 | Area | Source | Responsibility |
 |---|---|---|
-| Public CLI wrapper | `src/ai_rail/cli.py` | Entrypoint for `rail`, short daily commands, package features, output rewriting, generated brain, exports, demo, release checks |
+| Public CLI wrapper | `src/ai_rail/cli.py` | Entrypoint for `rail`, short daily commands, planning/phase prompts, roadmap import, package features, output rewriting, generated brain, exports, demo, release checks |
 | Repo-local runtime | `src/ai_rail/template/.rail/rail.py` | Detailed issue workflow copied into target repos by `rail init` |
 | Templates | `src/ai_rail/template/` | Files installed into a user repo, including `.rail/` contracts, default config, Makefile, and local runtime |
 | Brain files | Generated `.rail/brain/*.md` | Portable project context created by `rail snapshot` and embedded by `rail handoff` |
@@ -25,12 +25,15 @@ rail CLI public layer
 The public `rail` command lives in `src/ai_rail/cli.py`. It provides:
 
 - short daily wrappers: `next`, `verify`, `ship`, and `resume`
+- roadmap workflow commands: `plan`, `import`, and `phase`
 - package-level commands: `about`, `demo`, `release-check`, `ci-init`, `log`, and `report`
 - model-aware state around the active issue
 - `.rail/brain/` generation through `snapshot`
 - model-specific handoff rendering through `handoff`
 - tool-specific export generation through `export`
 - output rewriting for legacy local-runtime hints
+
+In the roadmap workflow, `.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue. `rail import` is a deterministic one-way import from the roadmap issue into `.rail/PROJECT.md`; it does not create GitHub issues, commit, push, pull, or call an AI service.
 
 Commands that are still owned by the repo-local runtime are delegated to `.rail/rail.py`. This keeps the public wrapper small while preserving compatibility with initialized repositories.
 

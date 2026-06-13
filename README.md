@@ -213,6 +213,7 @@ rail export
 | `rail init` | Add AI Rail files to a repo |
 | `rail resume` | Show where you stopped |
 | `rail plan` | Generate a GitHub-connected AI prompt to create a phased issue roadmap |
+| `rail import` | Import the GitHub roadmap issue into local `.rail/PROJECT.md` |
 | `rail phase` | Generate a GitHub-connected AI prompt to audit/update the current roadmap phase |
 | `rail next` | Start the next issue and generate the first prompt |
 | `rail handoff` | Generate portable context for another AI session/model |
@@ -223,7 +224,7 @@ rail export
 | `rail demo` | Print the public demo script |
 | `rail release-check` | Check packaging/docs readiness |
 
-Common aliases are thin wrappers over the long commands: `rail r` for `resume`, `rail n` for `next --copy`, `rail p` for `plan --copy`, `rail ph` for `phase --copy`, `rail v` for `verify --copy`, `rail s` for `ship`, `rail snap` for `snapshot`, `rail h`/`hc`/`hg`/`hl` for handoffs, `rail x`/`xd`/`xf` for exports, and `rail rc` for `release-check`.
+Common aliases are thin wrappers over the long commands: `rail r` for `resume`, `rail n` for `next --copy`, `rail p` for `plan --copy`, `rail ph` for `phase --copy`, `rail im` for `import`, `rail v` for `verify --copy`, `rail s` for `ship`, `rail snap` for `snapshot`, `rail h`/`hc`/`hg`/`hl` for handoffs, `rail x`/`xd`/`xf` for exports, and `rail rc` for `release-check`.
 
 Detailed commands such as `rail start`, `rail prompt`, `rail review`, `rail checks`, `rail commit`, `rail issue-close`, `rail done`, and `rail sync` remain available for manual control.
 

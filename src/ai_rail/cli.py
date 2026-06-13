@@ -849,6 +849,18 @@ def cmd_ship(argv: list[str]) -> int:
     ns = parser.parse_args(argv)
     active_before_ship = active()
 
+    if active_before_ship and not ns.no_close:
+        issue = active_before_ship.get("issue", {})
+        try:
+            updated, phase_hint = mark_project_issue_completed(issue.get("number"), issue.get("title"))
+            if updated:
+                print("[rail] Updated .rail/PROJECT.md for completed issue; it will be included in the ship commit.")
+            if phase_hint:
+                print(f"[rail] {phase_hint}")
+        except Exception as exc:
+            print(f"[rail] Warning: could not update .rail/PROJECT.md before ship: {exc}")
+            print("[rail] Recovery: mark the completed issue in .rail/PROJECT.md manually.")
+
     commit_args = ["commit", ns.message]
     append_flag(commit_args, ns.no_push, "--no-push")
     append_flag(commit_args, ns.amend, "--amend")
@@ -867,18 +879,6 @@ def cmd_ship(argv: list[str]) -> int:
             print("[rail] Ship stopped after commit succeeded; issue close failed. Active state was kept.")
             print("[rail] Recovery: manually close the GitHub issue or fix `gh auth login`, then run: rail done && rail sync")
             return rc
-
-    if active_before_ship and not ns.no_close:
-        issue = active_before_ship.get("issue", {})
-        try:
-            updated, phase_hint = mark_project_issue_completed(issue.get("number"), issue.get("title"))
-            if updated:
-                print("[rail] Updated .rail/PROJECT.md. Review and commit it with your next change, or commit it now.")
-            if phase_hint:
-                print(f"[rail] {phase_hint}")
-        except Exception as exc:
-            print(f"[rail] Could not update .rail/PROJECT.md after ship: {exc}")
-            print("[rail] Recovery: mark the completed issue in .rail/PROJECT.md manually.")
 
     if not ns.no_done:
         done_args: list[str] = []
@@ -1836,9 +1836,10 @@ For a new project with no scoped issues yet:
 
 ```bash
 rail plan --copy
+rail import
 ```
 
-Paste the planning prompt into a GitHub-connected AI agent. It should create a phased roadmap issue and a first batch of small implementation issues.
+Paste the planning prompt into a GitHub-connected AI agent. It should create a phased roadmap issue and a first batch of small implementation issues. Then import the roadmap issue into local `.rail/PROJECT.md`.
 
 For this demo, create one sample issue directly:
 
@@ -1876,6 +1877,7 @@ After several shipped issues, audit and update the current roadmap phase:
 
 ```bash
 rail phase --copy
+rail import
 ```
 
 ## 7. Export the project brain to AI tool files

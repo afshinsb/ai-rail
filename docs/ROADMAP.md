@@ -51,9 +51,19 @@ This roadmap records completed product phases and likely future integrations. It
 - Demo docs for `examples/demo-todo`.
 - Package test workflow for GitHub Actions.
 
+### 0.1.0a11: Import-Based Roadmap Workflow
+
+- `rail plan --copy` generates a prompt for a GitHub-connected planning AI to create or update one roadmap issue and only the first active execution slice.
+- `rail import` imports the GitHub roadmap issue into local `.rail/PROJECT.md`.
+- `.rail/PROJECT.md` is the full local project memory and roadmap brain.
+- The GitHub roadmap issue is the remote roadmap mirror.
+- GitHub implementation issues are only the active execution queue, not the full long-term roadmap.
+- `rail phase --copy` asks the planning AI to audit/update the roadmap issue and next execution slice.
+- `rail ship` marks matching local `.rail/PROJECT.md` checklist tasks complete when possible.
+
 ## Possible Future Integrations
 
 - MCP server.
 - VS Code helper.
 - Richer GitHub issue linting.
-- Optional roadmap-to-issues helper.
+- Optional roadmap quality/linting helpers.
