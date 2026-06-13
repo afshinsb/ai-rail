@@ -56,7 +56,7 @@ ISSUE_TEMPLATE = """## Goal
 
 
 def utc_now() -> str:
-    return dt.datetime.now(dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def ensure_state_dir() -> None:

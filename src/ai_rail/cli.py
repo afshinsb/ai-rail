@@ -17,7 +17,7 @@ PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain fo
 AUTHOR_NAME = "Afshin Saberi"
 PROJECT_REPOSITORY = "https://github.com/afshinsb/ai-rail"
 AUTHOR_WEBSITE = "https://theafshin.com"
-PROJECT_LICENSE = "MIT"
+PROJECT_LICENSE = "Apache-2.0"
 VALID_MODELS = {"codex", "patch", "ai-direct"}
 UNCONFIGURED_REPOSITORY_VALUES = {None, "", "CHANGE_ME"}
 COMMAND_ALIASES = {
@@ -96,7 +96,7 @@ def write_json(path: Path, data: Any) -> None:
 
 
 def utc_now() -> str:
-    return dt.datetime.now(dt.UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:

@@ -778,7 +778,7 @@ def test_about_outputs_project_metadata() -> None:
     assert "Author: Afshin Saberi" in result.stdout
     assert "Repository: https://github.com/afshinsb/ai-rail" in result.stdout
     assert "Website: https://theafshin.com" in result.stdout
-    assert "License: MIT" in result.stdout
+    assert "License: Apache-2.0" in result.stdout
 
 
 def test_pyproject_has_professional_author_and_project_urls() -> None:
