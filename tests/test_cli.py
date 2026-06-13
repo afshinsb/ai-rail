@@ -300,8 +300,9 @@ def test_generated_demo_includes_import_after_plan() -> None:
 
     assert result.returncode == 0, result.stderr + result.stdout
     plan_pos = result.stdout.index("rail plan --copy")
-    import_pos = result.stdout.index("rail import", plan_pos)
-    assert import_pos > plan_pos
+    paste_pos = result.stdout.index("Paste the planning prompt", plan_pos)
+    import_pos = result.stdout.index("rail import", paste_pos)
+    assert plan_pos < paste_pos < import_pos
 
 
 def test_roadmap_docs_describe_import_workflow_not_stale_a6_future() -> None:
@@ -604,6 +605,31 @@ def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path)
     assert calls == ["commit", "issue-close", "done", "sync"]
     assert calls.count("commit") == 1
     assert "- [x] #2 Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+
+
+def test_ship_restores_project_memory_when_commit_fails(tmp_path: Path) -> None:
+    rail = tmp_path / ".rail" / "rail.py"
+    rail.parent.mkdir(parents=True)
+    rail.write_text(
+        "import sys\n"
+        "print('fake ' + sys.argv[1])\n"
+        "raise SystemExit(1 if sys.argv[1] == 'commit' else 0)\n",
+        encoding="utf-8",
+    )
+    state = tmp_path / ".rail" / "state"
+    state.mkdir()
+    (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
+    before = "## Completed work\n\n## Active execution queue\n\n- [ ] #2 Build thing\n"
+    project = tmp_path / ".rail" / "PROJECT.md"
+    project.write_text(before, encoding="utf-8")
+
+    result = run_cli(tmp_path, "ship", "test: ship", "--no-push")
+
+    assert result.returncode == 1
+    assert project.read_text(encoding="utf-8") == before
+    assert "- [x] #2" not in project.read_text(encoding="utf-8")
+    assert "Restored .rail/PROJECT.md because ship commit failed." in result.stdout
+    assert "Ship stopped during commit" in result.stdout
 
 
 def test_ship_does_not_fail_if_project_update_fails(tmp_path: Path) -> None:

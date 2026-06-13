@@ -848,6 +848,11 @@ def cmd_ship(argv: list[str]) -> int:
     parser.add_argument("--keep-active", action="store_true", help="Keep active issue when running done.")
     ns = parser.parse_args(argv)
     active_before_ship = active()
+    project_path = rail_dir() / "PROJECT.md"
+    project_memory_before_ship: str | None = None
+    project_memory_existed_before_ship = project_path.exists()
+    if project_memory_existed_before_ship and project_path.is_file():
+        project_memory_before_ship = project_path.read_text(encoding="utf-8", errors="replace")
 
     if active_before_ship and not ns.no_close:
         issue = active_before_ship.get("issue", {})
@@ -870,6 +875,17 @@ def cmd_ship(argv: list[str]) -> int:
 
     rc = delegate(commit_args)
     if rc != 0:
+        if active_before_ship and not ns.no_close:
+            try:
+                if project_memory_existed_before_ship:
+                    if project_memory_before_ship is not None:
+                        project_path.write_text(project_memory_before_ship, encoding="utf-8")
+                elif project_path.exists():
+                    if project_path.is_file():
+                        project_path.unlink()
+                print("[rail] Restored .rail/PROJECT.md because ship commit failed.")
+            except Exception as exc:
+                print(f"[rail] Warning: could not restore .rail/PROJECT.md after ship commit failed: {exc}")
         print("[rail] Ship stopped during commit; no later ship steps ran.")
         return rc
 
@@ -1836,10 +1852,15 @@ For a new project with no scoped issues yet:
 
 ```bash
 rail plan --copy
-rail import
 ```
 
-Paste the planning prompt into a GitHub-connected AI agent. It should create a phased roadmap issue and a first batch of small implementation issues. Then import the roadmap issue into local `.rail/PROJECT.md`.
+Paste the planning prompt into a GitHub-connected AI agent. It should create a phased roadmap issue and a first batch of small implementation issues.
+
+After the AI creates or updates the roadmap issue and first issue slice:
+
+```bash
+rail import
+```
 
 For this demo, create one sample issue directly:
 

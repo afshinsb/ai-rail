@@ -19,6 +19,11 @@ For a brand-new app, start with a roadmap prompt:
 ```bash
 rail plan --copy
 # paste into a GitHub-connected AI agent
+```
+
+After the AI creates or updates the roadmap issue and first issue slice:
+
+```bash
 rail import
 # import the roadmap issue into .rail/PROJECT.md
 ```
