@@ -1,0 +1,66 @@
+# Changelog
+
+Maintained by Afshin Saberi.
+
+## 0.1.0a7
+
+- Made `rail init --force` safer when refreshing initialized repositories.
+- Added `rail upgrade` to safely refresh repo-local AI Rail runtime/template files.
+- Switched git path parsing to robust `porcelain -z` handling.
+- Cleaned up cross-platform CI and documentation readiness.
+- Added author/about metadata to public CLI output.
+- Finished packaging readiness fixes for the alpha release.
+
+## 0.1.0a6
+
+- Added `rail demo` to print a copyable public demo walkthrough.
+- Added `rail release-check` to validate public-alpha packaging and docs readiness.
+- Added `docs/QUICKSTART.md`, `docs/COMMANDS.md`, and `docs/RELEASE.md`.
+- Added `examples/demo-todo/DEMO_SCRIPT.md` and updated the demo README.
+- Added a package test workflow under `.github/workflows/tests.yml`.
+- Updated README and install docs for the final public-alpha workflow.
+- Made repo detection during `rail init` prefer fast local git remote detection before falling back to `gh`.
+
+## 0.1.0a5
+
+- Added `rail export` to generate tool-specific context files from the AI Rail project brain.
+- Added exports for root `AGENTS.md`, root `CLAUDE.md`, root `AIDER.md`, `.cursor/rules/ai-rail.mdc`, and `.github/copilot-instructions.md`.
+- Added safe managed-block updates using `AI_RAIL_EXPORT` markers.
+- Refuse to overwrite existing unmarked human files unless `--force` is used, with `.rail.bak` backups.
+- Added `--target`, `--dry-run`, `--force`, `--no-snapshot`, and `--max-history` options for exports.
+- Updated tests and docs for the one-project-brain/many-tool-files workflow.
+
+## 0.1.0a4
+
+- Added `rail snapshot` to generate a portable project brain under `.rail/brain/`.
+- Added `rail handoff` to create paste-ready model-specific handoffs for ChatGPT, Codex, Claude, Cursor, Aider, or generic AI sessions.
+- Added optional handoff inclusion for last review pack and last checks output.
+- Saved handoff outputs under `.rail/state/last-handoff-*.md`.
+- Updated docs and tests for the portable project brain workflow.
+
+## 0.1.0a3
+
+- Added commit/ship safety preflight requiring a fresh review pack and passed fresh checks by default.
+- Added dangerous/generated path guard for `.env`, keys, local databases, build outputs, dependencies, caches, and `.rail/state/`.
+- Changed commit staging to stage known changed paths instead of blindly staging the whole repository.
+- Added small untracked text file contents to review packs so new files are visible during AI audit.
+- Added first-push upstream handling with `git push -u origin HEAD` when needed.
+- Added `--allow-missing-checks` and `--allow-stale` escape hatches for advanced users.
+- Fixed legacy `mode=issue` active-state handling in the public wrapper.
+- Aligned the embedded repo-local runtime version with the public alpha version after audit.
+- Added Phase 3 regression tests for safety preflight, dangerous files, fresh review/check commit flow, and untracked review contents.
+
+## 0.1.0a2
+
+- Added short daily commands: `rail next`, `rail verify`, `rail ship`, and `rail resume`.
+- Updated README/docs/demo templates to lead with the shorter daily workflow.
+- Kept detailed legacy workflow commands available for manual control.
+
+## 0.1.0a1
+
+- Renamed project from AI Rail predecessor naming to `AI Rail`.
+- Renamed install package to `ai-rail`.
+- Renamed CLI entrypoint to `rail`.
+- Renamed project state folder to `.rail/`.
+- Renamed repo-local runtime file to `.rail/rail.py`.
+- Updated docs, examples, templates, tests, and package metadata for the rename.

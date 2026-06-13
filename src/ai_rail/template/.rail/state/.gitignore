@@ -1,0 +1,5 @@
+*
+!.gitignore
+
+# history.jsonl is generated locally and ignored by default.
+# Teams can opt in to tracking it by changing .rail/.gitignore.

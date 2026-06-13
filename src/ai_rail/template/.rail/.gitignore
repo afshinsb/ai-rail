@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+state/*
+!state/.gitignore
+
+# history.jsonl is local-only by default for privacy/team repos.
+# To share AI Rail history in git, remove the state/* rule above
+# or explicitly unignore:
+# !state/history.jsonl

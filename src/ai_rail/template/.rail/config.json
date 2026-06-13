@@ -1,0 +1,13 @@
+{
+  "project_name": "CHANGE_ME",
+  "repository": "CHANGE_ME",
+  "default_branch": "main",
+  "checks": [
+    "npm run check"
+  ],
+  "context_files": [
+    ".rail/AGENTS.md",
+    ".rail/PROJECT.md",
+    ".rail/CODEX.md"
+  ]
+}
