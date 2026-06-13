@@ -52,7 +52,26 @@ Recommended public install:
 
 ```bash
 pipx install ai-rail
+```
+
+Verify:
+
+```bash
 rail --version
+rail demo
+```
+
+If `pipx` is not installed yet:
+
+```bash
+python -m pip install --user pipx
+python -m pipx ensurepath
+```
+
+Restart your terminal, then run:
+
+```bash
+pipx install ai-rail
 ```
 
 Latest source from GitHub:
@@ -65,7 +84,9 @@ rail --version
 Contributor install from this source checkout:
 
 ```bash
-pip install -e ".[dev]"
+git clone https://github.com/afshinsb/ai-rail.git
+cd ai-rail
+python -m pip install -e ".[dev]"
 rail --version
 ```
 

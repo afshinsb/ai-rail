@@ -20,6 +20,7 @@ AUTHOR_WEBSITE = "https://theafshin.com"
 PROJECT_LICENSE = "Apache-2.0"
 VALID_MODELS = {"codex", "patch", "ai-direct"}
 UNCONFIGURED_REPOSITORY_VALUES = {None, "", "CHANGE_ME"}
+UNCONFIGURED_CONFIG_VALUES = {None, "", "CHANGE_ME"}
 COMMAND_ALIASES = {
     "r": ["resume"],
     "n": ["next", "--copy"],
@@ -107,12 +108,24 @@ def is_unconfigured_repository(value: Any) -> bool:
     return value in UNCONFIGURED_REPOSITORY_VALUES
 
 
+def is_unconfigured_config_value(value: Any) -> bool:
+    return value is None or value == "" or value == "CHANGE_ME"
+
+
 def checks_for_stack(stack: str) -> list[str]:
     if stack == "python":
         return ["python -m pytest"]
     if stack == "static":
         return []
     return ["npm run check"]
+
+
+def is_unconfigured_checks(value: Any) -> bool:
+    if is_unconfigured_config_value(value):
+        return True
+    if value == []:
+        return True
+    return isinstance(value, list) and value in [checks_for_stack("node"), checks_for_stack("python"), checks_for_stack("static")]
 
 
 def configured_repository(config: dict[str, Any]) -> str:
@@ -242,6 +255,7 @@ def install_template(src: Path, dst: Path, force: bool = False) -> dict[str, Any
         "preserved_dirs": sorted(str(path).replace("\\", "/") for path in preserved_existing_dirs),
         "config": "created",
         "config_backup": None,
+        "config_updates": [],
     }
 
     for p in src.rglob("*"):
@@ -287,6 +301,8 @@ def print_install_summary(summary: dict[str, Any]) -> None:
         print(f"- Backed up invalid .rail/config.json to {summary['config_backup']} and installed a fresh config")
     else:
         print("- Created .rail/config.json")
+    if summary["config_updates"]:
+        print("- Updated placeholder config values: " + ", ".join(summary["config_updates"]))
     for preserved in summary["preserved_dirs"]:
         print(f"- Preserved {preserved}/")
 
@@ -297,6 +313,7 @@ def cmd_init(argv: list[str]) -> int:
     parser.add_argument("--project-name")
     parser.add_argument("--force", action="store_true")
     ns = parser.parse_args(argv)
+    explicit_stack = any(arg == "--stack" or arg.startswith("--stack=") for arg in argv)
 
     cfg_path = rail_dir() / "config.json"
     had_config = cfg_path.exists()
@@ -305,21 +322,41 @@ def cmd_init(argv: list[str]) -> int:
 
     cfg = read_json(cfg_path, {})
     should_apply_init_defaults = not had_config or summary["config"] == "replaced"
+    config_updates: list[str] = []
     if ns.project_name and should_apply_init_defaults:
         cfg["project_name"] = ns.project_name
+    elif ns.project_name and is_unconfigured_config_value(cfg.get("project_name")):
+        cfg["project_name"] = ns.project_name
+        config_updates.append("project_name")
 
     if should_apply_init_defaults:
         # Stack presets are authoritative during first init; template defaults should not leak.
         cfg["checks"] = checks_for_stack(ns.stack)
+    elif explicit_stack and is_unconfigured_checks(cfg.get("checks")):
+        new_checks = checks_for_stack(ns.stack)
+        if cfg.get("checks") != new_checks:
+            cfg["checks"] = new_checks
+            config_updates.append("checks")
+
+    if "stack" in cfg and explicit_stack and is_unconfigured_config_value(cfg.get("stack")):
+        cfg["stack"] = ns.stack
+        config_updates.append("stack")
+
+    if is_unconfigured_config_value(cfg.get("default_branch")):
+        cfg["default_branch"] = "main"
+        config_updates.append("default_branch")
 
     detected_repo = detect_repo_from_tools()
-    if should_apply_init_defaults and detected_repo and is_unconfigured_repository(cfg.get("repository")):
+    if detected_repo and is_unconfigured_repository(cfg.get("repository")):
         cfg["repository"] = detected_repo
         print(f"Detected GitHub repo: {detected_repo}")
+        if not should_apply_init_defaults:
+            config_updates.append("repository")
     elif should_apply_init_defaults and is_unconfigured_repository(cfg.get("repository")):
         print("Repository not detected yet. Set .rail/config.json repository when ready.")
 
-    if should_apply_init_defaults:
+    summary["config_updates"] = config_updates
+    if should_apply_init_defaults or config_updates:
         write_json(cfg_path, cfg)
 
     # Make the compatibility script executable when supported.
@@ -897,14 +934,14 @@ def cmd_snapshot(argv: list[str]) -> int:
 
 
 def target_instructions(target: str) -> str:
-    common = """Use this handoff as the source of truth for the current state. Do not assume missing context. Keep the scope small and ask for clarification only when the handoff is insufficient to continue safely."""
+    common = """Use this handoff as the source of truth for the current state. Do not assume missing context. Keep scope small, work only on the active issue or requested task, and ask for clarification only when the handoff is insufficient to continue safely."""
     by_target = {
         "generic": "Continue from this project state. Summarize your understanding first, then work only on the requested next step.",
-        "chatgpt": "You are the reviewer/planner. Audit the current state, identify drift or risks, and give precise next actions or a small patch. Do not claim you ran commands unless evidence is included.",
-        "codex": "You are the coding agent. Implement only the active issue. Read AGENTS.md and the AI Rail brain first. Do not commit, push, close issues, or run broad unrelated tests.",
-        "claude": "You are the coding agent/reviewer. Use the project brain and active task as authoritative context. Keep edits narrow, preserve existing architecture, and report changed files and checks.",
-        "cursor": "Use the project brain as repo rules/context. Keep edits scoped to the active issue and avoid broad refactors unless the task explicitly asks for them.",
-        "aider": "Use this as the task brief. Edit only files relevant to the active issue, keep diffs small, and leave commit/review/ship to AI Rail.",
+        "chatgpt": "You are the reviewer/planner. Identify drift, check changed files against issue scope, check focused checks, decide whether ship is safe, and give exact next commands. Do not claim you ran commands unless evidence is included.",
+        "codex": "You are the coding agent. Implement only the active issue. Read AGENTS.md and the AI Rail brain first. Do not commit, push, close issues, create roadmaps, or run broad/full tests unless explicitly asked.",
+        "claude": "You are the coding agent/reviewer. Use the project brain and active task as authoritative context. Keep edits narrow, avoid broad refactors, and report changed files, focused checks, and risks.",
+        "cursor": "Use the project brain as repo rules/context. Keep edits scoped to the active issue, avoid broad refactors, and do not run broad/full tests unless explicitly asked.",
+        "aider": "Use this as the task brief. Edit only files relevant to the active issue, keep diffs small, run only focused requested checks, and leave commit/review/ship to AI Rail.",
     }
     return common + "\n\n" + by_target.get(target, by_target["generic"])
 
@@ -1084,28 +1121,36 @@ This repository uses AI Rail. Treat this file as repo-level guidance for Codex-c
 
 ## Agent role
 
-You are a scoped coding agent. Implement only the active task, keep edits narrow, and leave final review/ship actions to AI Rail and the human operator.""",
+You are a scoped coding agent. Implement only the active task, keep edits narrow, and leave final review/ship actions to AI Rail and the human operator.
+
+Do not commit, close issues, create unrelated roadmaps, rewrite architecture, or run broad/full tests unless explicitly requested. Run only focused checks related to the task.""",
         "claude": """# CLAUDE.md
 
 This repository uses AI Rail. Treat this file as Claude Code project memory and operating rules.
 
 ## Claude role
 
-You may implement or review the active task. Before editing, summarize the active issue and the smallest safe plan. Avoid broad refactors unless explicitly requested.""",
+You may implement or review the active task. Before editing, summarize the active issue and the smallest safe plan. Avoid broad refactors unless explicitly requested.
+
+Do not commit, close issues, create unrelated roadmaps, or run broad/full tests unless explicitly requested. Run only focused checks related to the task.""",
         "aider": """# AIDER.md
 
 This repository uses AI Rail. Treat this file as the active task brief for Aider.
 
 ## Aider role
 
-Edit only files relevant to the active issue. Keep commits and shipping outside Aider unless the human explicitly asks for them.""",
+Edit only files relevant to the active issue. Keep commits and shipping outside Aider unless the human explicitly asks for them.
+
+Do not create unrelated roadmaps, rewrite architecture, or run broad/full tests unless explicitly requested. Run only focused checks related to the task.""",
         "copilot": """# GitHub Copilot instructions
 
 This repository uses AI Rail. Use the generated AI Rail project state below as repository guidance.
 
 ## Copilot role
 
-Keep suggestions aligned with the active issue, existing architecture, and local checks. Avoid unrelated rewrites.""",
+Keep suggestions aligned with the active issue, existing architecture, and local checks. Avoid unrelated rewrites.
+
+Do not suggest broad/full test runs unless the issue explicitly asks for them. Prefer focused checks related to the task.""",
     }
     if target == "cursor":
         header = """---
@@ -1119,7 +1164,9 @@ This repository uses AI Rail. Treat this rule as always-on project context for C
 
 ## Cursor role
 
-Keep edits scoped to the active issue. Use the project brain as authoritative context and avoid broad refactors unless explicitly requested."""
+Keep edits scoped to the active issue. Use the project brain as authoritative context and avoid broad refactors unless explicitly requested.
+
+Do not commit, close issues, create unrelated roadmaps, or run broad/full tests unless explicitly requested. Run only focused checks related to the task."""
     else:
         header = target_specific[target]
     return f"""{EXPORT_BEGIN}
@@ -1270,10 +1317,10 @@ def render_demo_script() -> str:
 
 AI Rail is a local-first workflow rail and portable project brain for solo developers using AI coding assistants.
 
-## 1. Install for development
+## 1. Install AI Rail
 
 ```bash
-pip install -e \".[dev]\"
+pipx install ai-rail
 rail --version
 ```
 

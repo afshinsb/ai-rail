@@ -50,6 +50,43 @@ def test_init_creates_node_config_with_check(tmp_path: Path) -> None:
     assert (tmp_path / ".rail" / "CHATGPT.md").exists()
 
 
+def test_init_rerun_updates_placeholder_project_name(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init").returncode == 0
+    preserved = [
+        tmp_path / ".rail" / "state" / "keep.txt",
+        tmp_path / ".rail" / "reports" / "keep.txt",
+        tmp_path / ".rail" / "prompts" / "keep.txt",
+    ]
+    for path in preserved:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("keep\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Voxa")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    cfg = json.loads((tmp_path / ".rail" / "config.json").read_text(encoding="utf-8"))
+    assert cfg["project_name"] == "Voxa"
+    assert cfg["checks"] == ["npm run check"]
+    assert "Updated placeholder config values: project_name" in result.stdout
+    for path in preserved:
+        assert path.read_text(encoding="utf-8") == "keep\n"
+    doctor = run_cli(tmp_path, "doctor")
+    assert "project_name is still CHANGE_ME" not in doctor.stdout
+
+
+def test_init_rerun_preserves_existing_project_name(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Keep Me").returncode == 0
+
+    result = run_cli(tmp_path, "init", "--stack", "python", "--project-name", "Other")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    cfg = json.loads((tmp_path / ".rail" / "config.json").read_text(encoding="utf-8"))
+    assert cfg["project_name"] == "Keep Me"
+    assert "project_name" not in result.stdout
+
+
 def test_init_force_preserves_existing_config(tmp_path: Path) -> None:
     git_init(tmp_path)
     assert run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Demo").returncode == 0
