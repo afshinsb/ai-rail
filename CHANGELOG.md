@@ -2,6 +2,15 @@
 
 Maintained by Afshin Saberi.
 
+## 0.1.0a11
+
+- Added `rail plan` to generate a GitHub-connected AI prompt for phased roadmap creation.
+- Added `rail phase` to generate a GitHub-connected AI prompt for phase audits and roadmap updates.
+- Added aliases `rail p` and `rail ph`.
+- Updated README, quickstart, commands, workflows, demo, and installed template guidance for the full phased workflow.
+- Added planning-agent rules for right-sized implementation issues.
+- No breaking changes.
+
 ## 0.1.0a10
 
 - Added README prerequisites for Python, pipx, Git, and authenticated GitHub CLI where missing.

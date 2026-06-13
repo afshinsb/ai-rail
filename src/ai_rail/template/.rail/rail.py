@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.0a10"
+VERSION = "0.1.0a11"
 
 RAIL_DIR = Path(__file__).resolve().parent
 ROOT = RAIL_DIR.parent
