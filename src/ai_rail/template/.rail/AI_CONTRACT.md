@@ -5,10 +5,10 @@ This repo is managed by AI Rail.
 Model 1 normal workflow:
 
 ```text
-Create GitHub issue -> rail next --copy -> paste prompt into Codex/Claude/Cursor/Aider -> agent edits only issue scope -> rail verify --copy -> ChatGPT review -> rail ship
+Create GitHub issue -> rail next --copy -> paste prompt into Codex/Claude/Cursor/Aider -> agent edits only issue scope -> rail verify --copy -> AI reviewer audit -> rail ship
 ```
 
-ChatGPT is the planner/reviewer/workflow controller. The coding agent edits locally and stays scoped to the active issue.
+An AI reviewer such as ChatGPT, Claude, or another LLM is the planner/reviewer/workflow controller. The coding agent edits locally and stays scoped to the active issue.
 
 Rules:
 
@@ -25,6 +25,6 @@ Rules:
 11. Do not read or modify `.rail/rail.py`, `.rail/state/`, or `Makefile` unless the issue is specifically about AI Rail/tooling.
 12. Stop and explain if the task requires broader architecture or extra files.
 
-Model 2 patch workflow: create or choose issue -> ask ChatGPT for a surgical patch -> apply patch locally -> `rail verify --copy` -> ChatGPT review -> `rail ship`.
+Model 2 patch workflow: create or choose issue -> ask an AI reviewer for a surgical patch -> apply patch locally -> `rail verify --copy` -> AI reviewer audit -> `rail ship`.
 
 Model 3 AI-direct workflow is for low-risk docs/config/static changes unless risk is explicitly accepted. AI must state Model 3, change only requested GitHub files, provide `git fetch origin`, `git pull --ff-only`, and `git status`, and tell the user to run `rail verify --copy` after pulling.

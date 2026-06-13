@@ -48,6 +48,7 @@ def test_init_creates_node_config_with_check(tmp_path: Path) -> None:
     assert cfg["project_name"] == "Demo"
     assert cfg["checks"] == ["npm run check"]
     assert (tmp_path / ".rail" / "CHATGPT.md").exists()
+    assert (tmp_path / ".rail" / "AIDER.md").exists()
 
 
 def test_init_rerun_updates_placeholder_project_name(tmp_path: Path) -> None:
@@ -483,6 +484,19 @@ def test_commit_blocks_dangerous_file_with_spaces(tmp_path: Path) -> None:
     assert "- secret key.pem" in result.stdout
 
 
+def test_commit_force_warns_about_dangerous_paths(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    (tmp_path / ".env").write_text("SECRET=1\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "commit", "test: forced dangerous", "--no-push", "--force")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Warning: --force skips commit safety checks." in result.stdout
+    assert "Warning: dangerous paths are present in the working tree:" in result.stdout
+    assert "[rail]   - .env" in result.stdout
+    assert "Warning: --force does not protect against committing these." in result.stdout
+
+
 def test_phase3_commit_succeeds_after_fresh_review_and_checks(tmp_path: Path) -> None:
     init_static_repo_with_commit(tmp_path)
     (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
@@ -582,9 +596,7 @@ def test_ship_reports_partial_state_when_issue_close_fails(tmp_path: Path) -> No
     assert "fake commit" in result.stdout
     assert "fake issue-close" in result.stdout
     assert "Ship stopped after commit succeeded; issue close failed. Active state was kept." in result.stdout
-    assert "Recovery: close the GitHub issue manually or fix `gh auth login`, then run:" in result.stdout
-    assert "rail done" in result.stdout
-    assert "rail sync" in result.stdout
+    assert "Recovery: manually close the GitHub issue or fix `gh auth login`, then run: rail done && rail sync" in result.stdout
 
 
 def test_local_runtime_version_matches_public_alpha(tmp_path: Path) -> None:
@@ -602,7 +614,7 @@ def test_local_runtime_version_matches_public_alpha(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert "AI Rail v0.1.0a9" in result.stdout
+    assert "AI Rail v0.1.0a10" in result.stdout
 
 
 
@@ -803,7 +815,7 @@ def test_version_output_includes_author_and_repository() -> None:
     result = run_cli(ROOT, "--version")
 
     assert result.returncode == 0
-    assert "AI Rail 0.1.0a9" in result.stdout
+    assert "AI Rail 0.1.0a10" in result.stdout
     assert "Created by Afshin Saberi" in result.stdout
     assert "https://github.com/afshinsb/ai-rail" in result.stdout
 
@@ -814,7 +826,7 @@ def test_about_outputs_project_metadata() -> None:
     assert result.returncode == 0
     assert "AI Rail" in result.stdout
     assert "A local-first workflow rail and portable project brain for AI-assisted development." in result.stdout
-    assert "Version: 0.1.0a9" in result.stdout
+    assert "Version: 0.1.0a10" in result.stdout
     assert "Author: Afshin Saberi" in result.stdout
     assert "Repository: https://github.com/afshinsb/ai-rail" in result.stdout
     assert "Website: https://theafshin.com" in result.stdout

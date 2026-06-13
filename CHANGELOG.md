@@ -2,6 +2,19 @@
 
 Maintained by Afshin Saberi.
 
+## 0.1.0a10
+
+- Added README prerequisites for Python, pipx, Git, and authenticated GitHub CLI where missing.
+- Made general reviewer wording tool-agnostic instead of ChatGPT-only.
+- Improved PyPI project URLs with repository homepage, changelog, and bug tracker links.
+- Kept public install first in quickstart/demo guidance.
+- Added README security callout for shell-based configured checks.
+- Added recovery guidance for partial `rail ship` failures.
+- Added warning output when `--force` is used while dangerous paths are present.
+- Added installed `.rail/AIDER.md` contract template when missing.
+- Documented `lastest` as a backward-compatible typo alias.
+- No breaking changes.
+
 ## 0.1.0a9
 
 - Added clearer prerequisites and `pipx` install guidance.

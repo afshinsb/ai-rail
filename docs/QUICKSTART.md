@@ -4,17 +4,20 @@ AI Rail gives your repo a portable project brain and a short daily workflow for 
 
 ## Install
 
+Public install:
+
 ```bash
 pipx install ai-rail
 rail --version
 ```
 
-## Contributor/source install
+Contributor install from source checkout:
 
 ```bash
 git clone https://github.com/afshinsb/ai-rail.git
 cd ai-rail
 python -m pip install -e ".[dev]"
+rail --version
 ```
 
 ## Initialize a repo

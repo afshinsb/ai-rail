@@ -18,11 +18,19 @@ rail s  -> safely commit, push, close, and sync
 rail h  -> continue in a new AI chat with full project context
 ```
 
-AI Rail keeps the coding agent on the active issue, keeps an AI reviewer such as ChatGPT, Claude, or another LLM in the review loop, and lets your own machine run the tests - saving tokens, reducing over-coding, and making AI development feel controlled instead of chaotic.
+AI Rail keeps the coding agent on the active issue, keeps an AI reviewer (ChatGPT, Claude, or any LLM) in the audit loop, and lets your own machine run the tests - saving tokens, reducing over-coding, and making AI development feel controlled instead of chaotic.
 
 <p align="center">
   <img src="docs/assets/ai-rail.png" alt="AI Rail overview" width="900">
 </p>
+
+## Prerequisites
+
+- Python 3.10+ and [pipx](https://pipx.pypa.io/)
+- [Git](https://git-scm.com/) with a configured remote
+- [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated (`gh auth login`)
+
+AI Rail uses Git for repository state and delegates GitHub Issue operations to `gh`. Run `gh auth login` before using AI Rail on a new machine.
 
 ## Who This Is For
 
@@ -48,24 +56,10 @@ AI Rail is not:
 
 AI Rail is currently alpha software.
 
-## Prerequisites
-
-- Python 3.10+
-- `pipx` for installing the `rail` CLI
-- Git with a configured remote
-- GitHub CLI (`gh`) installed and authenticated with `gh auth login`
-
-AI Rail uses Git for repository state and delegates GitHub Issue operations to `gh`.
-
 Recommended public install:
 
 ```bash
 pipx install ai-rail
-```
-
-Verify:
-
-```bash
 rail --version
 rail demo
 ```
@@ -114,6 +108,7 @@ cd examples/demo-todo
 rail init --stack node --project-name "AI Rail Demo TODO"
 rail doctor
 npm run check
+# requires: gh auth login
 gh issue create --title "Add todo body validation" --body-file issues/001-add-body-validation.md
 rail next --copy
 ```
@@ -128,16 +123,13 @@ rail doctor
 rail resume
 ```
 
-> **Security:** `rail verify` runs the check commands from `.rail/config.json` using the system shell.
-> Review `.rail/config.json` before running checks in repositories you did not author.
-
 Daily loop:
 
 ```bash
 rail next --copy
 # paste/run the generated prompt in your AI coding tool
 rail verify --copy
-# paste the generated review prompt into an AI reviewer for audit
+# paste the generated review prompt into any AI reviewer for audit
 rail ship "type(scope): message"
 ```
 
@@ -147,7 +139,7 @@ Short alias loop:
 rail n
 # paste/run the generated prompt in your AI coding tool
 rail v
-# paste the generated review prompt into an AI reviewer for audit
+# paste the generated review prompt into any AI reviewer for audit
 rail s "type(scope): message"
 ```
 
@@ -224,6 +216,8 @@ Escape hatches exist for advanced users, but the normal path is intentionally co
 ## Local-First Privacy
 
 AI Rail does not send your code anywhere by itself. It shells out to `git`, `gh`, and your configured local checks.
+
+> **Security:** `rail verify` runs the check commands configured in `.rail/config.json` using the system shell. Always review `.rail/config.json` in repositories you did not author before running `rail verify` or `rail checks`.
 
 By default, `.rail/state/history.jsonl` is ignored by git to avoid committing personal workflow history into team repos.
 

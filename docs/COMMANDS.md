@@ -54,7 +54,7 @@ These remain available when you want manual control:
 | `rail issue-template` | Print the standard issue body template |
 | `rail issue-create` | Create a GitHub issue with `gh` |
 | `rail issue-comment` | Comment on the active GitHub issue |
-| `rail start` | Start an issue by number, `next`, or `latest` (also accepts `lastest` as a typo alias) |
+| `rail start` | Start an issue by number, `next`, or `latest` (also accepts `lastest` as a backward-compatible typo alias) |
 | `rail prompt codex` | Generate an implementation prompt |
 | `rail prompt review` | Generate an audit/review prompt |
 | `rail patch` | Apply a local `.patch` file |

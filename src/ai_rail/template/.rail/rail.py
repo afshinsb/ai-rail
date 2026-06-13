@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.0a9"
+VERSION = "0.1.0a10"
 
 RAIL_DIR = Path(__file__).resolve().parent
 ROOT = RAIL_DIR.parent
@@ -304,6 +304,11 @@ def safety_preflight_before_commit(args: argparse.Namespace) -> int:
 
     if args.force:
         print("[rail] Warning: --force skips commit safety checks.")
+        if dangerous:
+            print("[rail] Warning: dangerous paths are present in the working tree:")
+            for item in dangerous:
+                print(f"[rail]   - {item}")
+            print("[rail] Warning: --force does not protect against committing these. Review before proceeding.")
         return 0
 
     if not LAST_REVIEW_PATH.exists():
@@ -385,7 +390,7 @@ def fetch_issue(issue_ref: str) -> dict[str, Any]:
 
     issue_ref may be:
     - number
-    - latest: most recently updated open issue; lastest is accepted as a typo alias
+    - latest: most recently updated open issue; lastest is accepted as a backward-compatible typo alias
     - next: open issue labeled status:next, otherwise lowest-numbered open issue
     """
     if not gh_available():
@@ -1239,8 +1244,8 @@ def parse_args() -> argparse.Namespace:
     issue_list.add_argument("--label", action="append")
     issue_list.add_argument("--sort", choices=["created", "updated", "comments"], default=None)
 
-    start = sub.add_parser("start", help="Start a GitHub issue by number, latest, or next. Also accepts lastest as a typo alias.")
-    start.add_argument("issue_ref", help="Issue number, latest, or next. Also accepts lastest as a typo alias.")
+    start = sub.add_parser("start", help="Start a GitHub issue by number, latest, or next. Also accepts lastest as a backward-compatible typo alias.")
+    start.add_argument("issue_ref", help="Issue number, latest, or next. Also accepts lastest as a backward-compatible typo alias.")
     start.add_argument("--no-branch", action="store_true", help="Do not create/switch issue branch.")
     start.add_argument("--reset-branch", action="store_true", help="Reset existing issue branch to current HEAD.")
     start.add_argument("--force", action="store_true", help="Replace active issue if one already exists.")
