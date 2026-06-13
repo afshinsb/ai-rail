@@ -10,6 +10,8 @@ Work only on the active GitHub issue or explicitly requested task. Touch only ne
 
 Do not commit. Do not close issues. Do not create unrelated roadmaps or task folders.
 
+Do not silently update the roadmap or create extra tasks unless the planning or phase prompt asks.
+
 Do not read or modify `.rail/rail.py`, `.rail/state/`, or `Makefile` unless the issue is specifically about AI Rail/tooling.
 
 Do not run broad/full test suites unless the issue explicitly asks for them. Run only focused checks related to the issue, or the exact checks requested by the user or AI Rail.
@@ -18,7 +20,7 @@ Stop and explain if the task requires broader architecture or extra files.
 
 Use GitHub Issues as the task database.
 
-Use `.rail/PROJECT.md` as the roadmap/current-direction source of truth.
+Use `.rail/PROJECT.md` as project truth, GitHub Issues as task truth, and the roadmap issue as phase truth.
 
 For short command sequences, put commands directly in chat.
 

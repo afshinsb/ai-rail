@@ -14,6 +14,15 @@ npm run check
 
 ## Create sample issue
 
+For a brand-new app, start with a roadmap prompt:
+
+```bash
+rail plan --copy
+# paste into a GitHub-connected AI agent
+```
+
+For this demo, create one sample issue directly:
+
 ```bash
 gh issue create --title "Add todo body validation" --body-file issues/001-add-body-validation.md
 ```
@@ -27,6 +36,13 @@ rail verify --copy
 # paste the review prompt into an AI reviewer for audit
 rail handoff --for chatgpt --include-review --include-checks --copy
 rail ship "fix(api): add todo body validation"
+```
+
+## Audit the phase
+
+```bash
+rail phase --copy
+# paste into a GitHub-connected AI reviewer/agent
 ```
 
 ## Export project brain

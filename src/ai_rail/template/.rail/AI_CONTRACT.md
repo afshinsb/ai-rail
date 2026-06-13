@@ -10,6 +10,10 @@ Create GitHub issue -> rail next --copy -> paste prompt into Codex/Claude/Cursor
 
 An AI reviewer such as ChatGPT, Claude, or another LLM is the planner/reviewer/workflow controller. The coding agent edits locally and stays scoped to the active issue.
 
+Planning flow: `rail plan --copy` before scoped issues exist, then `rail next --copy` one issue at a time. Phase audit flow: after several shipped issues, run `rail phase --copy`; the AI reviewer audits roadmap progress and creates or recommends only right-sized next issues.
+
+`.rail/PROJECT.md` is project truth. GitHub Issues are task truth. The roadmap issue is phase truth.
+
 Rules:
 
 1. Work only on the active GitHub issue or explicitly requested task.
@@ -24,6 +28,7 @@ Rules:
 10. Coding agents run only focused checks related to the issue, or the exact checks requested by the user or AI Rail.
 11. Do not read or modify `.rail/rail.py`, `.rail/state/`, or `Makefile` unless the issue is specifically about AI Rail/tooling.
 12. Stop and explain if the task requires broader architecture or extra files.
+13. Coding agents do not silently update the roadmap or create extra tasks unless the planning or phase prompt asks.
 
 Model 2 patch workflow: create or choose issue -> ask an AI reviewer for a surgical patch -> apply patch locally -> `rail verify --copy` -> AI reviewer audit -> `rail ship`.
 

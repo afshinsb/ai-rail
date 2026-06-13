@@ -8,6 +8,8 @@ Work only on the active GitHub issue or explicitly requested task. Touch only ne
 
 Do not commit. Do not close issues. Do not create unrelated roadmaps or task folders.
 
+Do not silently update the roadmap or create extra tasks unless the planning or phase prompt asks.
+
 Do not read or modify `.rail/rail.py`, `.rail/state/`, or `Makefile` unless the issue is specifically about AI Rail/tooling.
 
 Do not run broad/full test suites unless the issue explicitly asks for them. Run only focused checks related to the issue, or the exact checks requested by the user or AI Rail.

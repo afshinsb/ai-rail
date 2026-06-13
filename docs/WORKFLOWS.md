@@ -2,6 +2,14 @@
 
 AI Rail supports one daily loop and three interaction models. The short commands are the normal path; the detailed commands remain available when you need manual control.
 
+## Full Lifecycle
+
+Use `rail plan --copy` before the first coding issue exists. Paste it into a GitHub-connected AI agent so it can audit the repo, create one phased roadmap issue, and create a first batch of scoped GitHub Issues.
+
+Use `rail next --copy` after issues exist. It still starts one issue at a time and generates the coding-agent prompt for that single issue.
+
+After several issues have shipped, use `rail phase --copy` to audit the current roadmap phase. Phase audit is not coding: the AI reviewer checks completed and open issues, updates or recommends roadmap status, and creates only the next right-sized blocker or phase issues.
+
 ## Daily Loop
 
 ```bash

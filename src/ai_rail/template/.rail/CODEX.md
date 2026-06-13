@@ -13,6 +13,8 @@ Do not read or modify `.rail/rail.py`, `.rail/state/`, or `Makefile` unless the 
 
 Do not create unrelated roadmaps or task folders.
 
+Do not silently update the roadmap or create extra tasks unless the planning or phase prompt asks.
+
 Do not rewrite architecture unless the issue explicitly asks.
 
 Do not commit.

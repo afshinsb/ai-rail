@@ -263,6 +263,65 @@ def test_detect_repo_returns_none_when_gh_missing_and_remote_unavailable(tmp_pat
     assert cli.detect_repo_from_tools() is None
 
 
+def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    run_cli(tmp_path, "init", "--stack", "static", "--project-name", "Road Demo")
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["repository"] = "owner/road-demo"
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "plan")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Project: Road Demo" in result.stdout
+    assert "Repository: owner/road-demo" in result.stdout
+    assert "phased" in result.stdout.lower()
+    assert "Roadmap: Road Demo functional MVP" in result.stdout
+    assert "no more than 12 issues" in result.stdout
+    assert "## Goal" in result.stdout
+    assert "## Current problem" in result.stdout
+    assert "## Scope" in result.stdout
+    assert "## Out of scope" in result.stdout
+    assert "## Files likely touched" in result.stdout
+    assert "## Acceptance checks" in result.stdout
+    assert "## AI/Codex rules" in result.stdout
+    assert "one focused coding session" in result.stdout
+    assert "rail n" in result.stdout
+    assert "rail v" in result.stdout
+    assert 'rail s "type(scope): message"' in result.stdout
+
+
+def test_plan_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
+    result = run_cli(tmp_path, "plan", "--copy")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "GitHub-connected planning agent" in result.stdout
+
+
+def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    run_cli(tmp_path, "init", "--stack", "static", "--project-name", "Phase Demo")
+
+    result = run_cli(tmp_path, "phase")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Roadmap: Phase Demo functional MVP" in result.stdout
+    assert "phase-audit agent" in result.stdout
+    assert "completed/closed issues" in result.stdout
+    assert "remaining blockers" in result.stdout
+    assert "next phase recommendation" in result.stdout
+    assert "one focused coding session" in result.stdout
+    assert "rail n -> coding agent -> rail v -> AI reviewer -> rail s" in result.stdout
+
+
+def test_phase_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
+    result = run_cli(tmp_path, "phase", "--copy")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "GitHub-connected phase-audit agent" in result.stdout
+
+
 def test_model_guard_codex_refuses_on_patch(tmp_path: Path) -> None:
     git_init(tmp_path)
     run_cli(tmp_path, "init", "--stack", "node")
@@ -375,7 +434,7 @@ def test_delegated_output_rewrites_inline_o_alias() -> None:
 def test_help_lists_short_daily_commands() -> None:
     result = run_cli(ROOT, "--help")
     assert result.returncode == 0
-    assert "Daily: init, resume, next, handoff, verify, ship, snapshot, export" in result.stdout
+    assert "Daily: init, resume, plan, phase, next, handoff, verify, ship, snapshot, export" in result.stdout
 
 
 def test_phase3_commit_requires_review_before_shipping(tmp_path: Path) -> None:
@@ -851,7 +910,7 @@ def test_phase6_help_lists_public_phase_commands() -> None:
     assert "demo" in result.stdout
     assert "release-check" in result.stdout
     assert "upgrade" in result.stdout
-    assert "Aliases: r, n, v, s, snap, h, hc, hg, hl, x, xd, xf, rc" in result.stdout
+    assert "Aliases: r, n, p, ph, v, s, snap, h, hc, hg, hl, x, xd, xf, rc" in result.stdout
 
 
 def test_alias_expansion_table_matches_documented_shortcuts() -> None:
@@ -861,6 +920,8 @@ def test_alias_expansion_table_matches_documented_shortcuts() -> None:
     cases = {
         ("r",): ["resume"],
         ("n",): ["next", "--copy"],
+        ("p",): ["plan", "--copy"],
+        ("ph",): ["phase", "--copy"],
         ("v",): ["verify", "--copy"],
         ("s", "test: msg"): ["ship", "test: msg"],
         ("snap",): ["snapshot"],

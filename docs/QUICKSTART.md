@@ -44,12 +44,28 @@ rail init --stack static
 
 ## Daily loop
 
+For a new repo with no scoped GitHub Issues yet, generate a planning prompt first:
+
+```bash
+rail plan --copy
+# paste into a GitHub-connected AI agent
+```
+
+That AI should create a phased roadmap issue and a first batch of small implementation issues.
+
 ```bash
 rail next --copy
 # paste/run the generated prompt in your AI coding tool
 rail verify --copy
 # paste the generated review prompt into an AI reviewer for audit
 rail ship "type(scope): message"
+```
+
+After several shipped issues, audit and update the roadmap phase:
+
+```bash
+rail phase --copy
+# paste into a GitHub-connected AI reviewer/agent
 ```
 
 See [WORKFLOWS.md](WORKFLOWS.md) for the Codex-based, patch-based, and AI-direct interaction models.

@@ -8,6 +8,17 @@ It turns GitHub Issues into controlled loops:
 Issue -> Start -> Prompt -> Edit/Patch/AI-direct -> Review -> Checks -> Audit -> Commit/PR -> Close -> Done -> Sync/Pull
 ```
 
+## Project, task, and phase truth
+
+- `.rail/PROJECT.md` is project truth.
+- GitHub Issues are task truth.
+- The roadmap issue is phase truth.
+- `rail plan --copy` creates the planning prompt before scoped issues exist.
+- `rail phase --copy` creates the phase-audit prompt after several shipped issues.
+- Coding happens one issue at a time through `rail next --copy`.
+
+Coding agents should not silently update the roadmap or create extra tasks unless the planning or phase prompt asks for that.
+
 ## Daily loop
 
 ```bash
@@ -35,6 +46,8 @@ The coding agent should read only the allowed context files and active GitHub is
 
 - Coding agent prompt: `rail next --copy`
 - Reviewer prompt: `rail verify --copy`
+- Planning prompt: `rail plan --copy`
+- Phase-audit prompt: `rail phase --copy`
 - New ChatGPT chat: `rail handoff --for chatgpt --copy`
 - Tool-specific handoff: `rail handoff --for codex --copy` or `rail handoff --for claude --copy`
 - Root AI instruction files: `rail export`

@@ -24,6 +24,8 @@ UNCONFIGURED_CONFIG_VALUES = {None, "", "CHANGE_ME"}
 COMMAND_ALIASES = {
     "r": ["resume"],
     "n": ["next", "--copy"],
+    "p": ["plan", "--copy"],
+    "ph": ["phase", "--copy"],
     "v": ["verify", "--copy"],
     "s": ["ship"],
     "snap": ["snapshot"],
@@ -192,6 +194,28 @@ def detect_repo_from_tools() -> str | None:
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
     return None
+
+
+def detect_repo_from_git_remote() -> str | None:
+    if not shutil.which("git"):
+        return None
+    result = run(["git", "remote", "get-url", "origin"], timeout=5)
+    url = result.stdout.strip()
+    if not url:
+        return None
+    match = re.search(r"github\.com[:/](.+?)(?:\.git)?$", url)
+    if match:
+        return match.group(1)
+    return url
+
+
+def planning_identity() -> tuple[str, str]:
+    config = cfg()
+    project_name = str(config.get("project_name") or root().name)
+    repository = config.get("repository")
+    if is_unconfigured_repository(repository):
+        repository = detect_repo_from_git_remote() or "not configured"
+    return project_name, str(repository)
 
 
 def rewrite_core_output(text: str) -> str:
@@ -656,6 +680,194 @@ def cmd_prompt(argv: list[str]) -> int:
             print(f"[rail] Warning: running Codex prompt despite active model being `{model}`.")
         argv = [x for x in argv if x != "--force"]
     return delegate(["prompt", *argv])
+
+
+def render_plan_prompt() -> str:
+    project_name, repository = planning_identity()
+    return f"""You are a GitHub-connected planning agent for this repository.
+
+Project: {project_name}
+Repository: {repository}
+
+Audit the repo enough to understand:
+- project purpose
+- tech stack
+- current features
+- missing backend/backbone/configuration
+- fake UI or unimplemented controls
+- risky/broken areas
+- what should be done first
+
+Create one phased roadmap summary issue titled:
+Roadmap: {project_name} functional MVP
+
+Structure the roadmap into phases. Example phase styles:
+- Phase 1 - Foundation / cleanup / truth alignment
+- Phase 2 - Core functionality
+- Phase 3 - UI/backbone connection
+- Phase 4 - safety/polish/release readiness
+
+Do not force those exact phase names; choose phases that fit this repo.
+
+Create the first batch of implementation-ready GitHub Issues:
+- no more than 12 issues in the first batch
+- small enough for one focused coding-agent pass
+- big enough to be meaningful
+- not tiny/noisy micro-tasks
+- not huge phase-sized tasks
+- ordered safest/foundation-first
+- each issue should produce a clear diff
+- avoid vague issues like "improve UI" or "refactor app"
+- prefer backbone/config/foundation fixes before polish
+
+Each implementation issue must include this body template:
+
+## Goal
+
+## Current problem
+
+## Scope
+
+## Out of scope
+
+## Files likely touched
+
+## Acceptance checks
+
+## AI/Codex rules
+
+- Keep scope small.
+- Touch only necessary files.
+- Do not commit.
+- Do not close the issue.
+- Do not run broad/full test suites unless explicitly asked.
+- Run only focused checks related to this issue.
+- Stop and explain if this requires broader architecture changes.
+
+Task-writing rules:
+- Each issue should be doable in one focused coding session.
+- Each issue should usually touch a small set of related files.
+- Each issue should have enough detail that `rail next --copy` can be pasted directly into a coding agent without re-explaining the project.
+- Do not create tasks so small they waste overhead.
+- Do not create tasks so large they invite drift.
+- Do not bundle unrelated UI, backend, docs, and config changes into one issue.
+- If a phase is large, split it into several scoped issues.
+- If the coding agent would need to make architecture decisions, create a planning/audit issue first instead of a coding issue.
+
+Do not:
+- implement code
+- make commits
+- open PRs
+- create more than 12 first-batch issues
+- create vague or huge issues
+
+After the roadmap and issues exist, the human will run:
+
+rail n
+# paste generated prompt into coding agent
+
+rail v
+# paste review prompt into AI reviewer
+
+rail s "type(scope): message"
+
+Implementation happens through the one-issue-at-a-time AI Rail loop."""
+
+
+def render_phase_prompt() -> str:
+    project_name, repository = planning_identity()
+    history = "\n".join(recent_history_lines(8))
+    return f"""You are a GitHub-connected phase-audit agent for this repository.
+
+Project: {project_name}
+Repository: {repository}
+
+Inspect the repo and GitHub Issues. Find the roadmap issue, usually titled like:
+Roadmap: {project_name} functional MVP
+
+Identify:
+- current phase
+- completed/closed issues in that phase
+- open issues in that phase
+- shipped work since the last phase audit
+
+Recent AI Rail history, if available:
+{history}
+
+Audit whether the phase is really complete. Check for:
+- scope drift
+- incomplete tasks
+- broken assumptions
+- missing tests/checks
+- docs mismatch
+- fake UI still not backed
+- risky shortcuts
+- roadmap mismatch
+
+If the phase is complete:
+- mark or recommend the phase as complete in the roadmap issue
+- recommend or create the next small batch of issues for the next phase
+- keep new issues right-sized for coding agents
+
+If the phase is not complete:
+- list remaining blockers
+- create or update only scoped blocker issues
+- do not start the next phase yet
+
+Right-sized issue rules:
+- one focused coding session
+- clear diff
+- not a micro-task
+- not a giant phase-sized task
+- no unrelated bundles
+- enough detail for `rail next --copy`
+
+Do not:
+- implement code
+- commit
+- open PRs
+- close roadmap phases unless the audit supports it
+- silently create unrelated tasks
+
+Implementation still happens one issue at a time through:
+
+rail n -> coding agent -> rail v -> AI reviewer -> rail s
+
+Return:
+- phase audit verdict
+- completed issue list
+- remaining blockers
+- roadmap updates made or recommended
+- next phase recommendation
+- next issue to run with AI Rail"""
+
+
+def cmd_plan(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="rail plan")
+    parser.add_argument("--copy", action="store_true", help="Copy planning prompt to clipboard when possible.")
+    ns = parser.parse_args(argv)
+    text = render_plan_prompt()
+    print(text)
+    if ns.copy:
+        if copy_to_clipboard(text):
+            print("\n[rail] planning prompt copied to clipboard")
+        else:
+            print("\n[rail] copy requested, but no supported clipboard command was found")
+    return 0
+
+
+def cmd_phase(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="rail phase")
+    parser.add_argument("--copy", action="store_true", help="Copy phase-audit prompt to clipboard when possible.")
+    ns = parser.parse_args(argv)
+    text = render_phase_prompt()
+    print(text)
+    if ns.copy:
+        if copy_to_clipboard(text):
+            print("\n[rail] phase-audit prompt copied to clipboard")
+        else:
+            print("\n[rail] copy requested, but no supported clipboard command was found")
+    return 0
 
 
 def cmd_patch(argv: list[str]) -> int:
@@ -1340,7 +1552,17 @@ rail doctor
 npm run check
 ```
 
-## 3. Create a sample GitHub issue
+## 3. Create or plan GitHub issues
+
+For a new project with no scoped issues yet:
+
+```bash
+rail plan --copy
+```
+
+Paste the planning prompt into a GitHub-connected AI agent. It should create a phased roadmap issue and a first batch of small implementation issues.
+
+For this demo, create one sample issue directly:
 
 ```bash
 gh issue create --title \"Add todo body validation\" --body-file issues/001-add-body-validation.md
@@ -1371,6 +1593,12 @@ rail ship \"fix(api): add todo body validation\"
 ```
 
 `rail ship` refuses unsafe commits by default when review/check state is missing or stale, or when dangerous/generated files are changed.
+
+After several shipped issues, audit and update the current roadmap phase:
+
+```bash
+rail phase --copy
+```
 
 ## 7. Export the project brain to AI tool files
 
@@ -1504,8 +1732,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in {"-h", "--help"}:
         print(f"AI Rail {VERSION}")
-        print("Daily: init, resume, next, handoff, verify, ship, snapshot, export")
-        print("Aliases: r, n, v, s, snap, h, hc, hg, hl, x, xd, xf, rc")
+        print("Daily: init, resume, plan, phase, next, handoff, verify, ship, snapshot, export")
+        print("Aliases: r, n, p, ph, v, s, snap, h, hc, hg, hl, x, xd, xf, rc")
         print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, sync, log, report, ci-init, upgrade, about, demo, release-check")
         return 0
     if argv[0] in {"--version", "version"}:
@@ -1524,6 +1752,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_status(rest)
     if cmd == "next":
         return cmd_next(rest)
+    if cmd == "plan":
+        return cmd_plan(rest)
+    if cmd == "phase":
+        return cmd_phase(rest)
     if cmd == "verify":
         return cmd_verify(rest)
     if cmd == "ship":

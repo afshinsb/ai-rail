@@ -8,6 +8,8 @@
 | `rail upgrade` | Refresh repo-local AI Rail runtime/template files safely |
 | `rail doctor` | Check setup, placeholders, and required AI contract files |
 | `rail resume` | Show active state and workflow position |
+| `rail plan` | Generate a GitHub-connected AI prompt to create a phased issue roadmap |
+| `rail phase` | Generate a GitHub-connected AI prompt to audit/update the current roadmap phase |
 | `rail next` | Start the next issue and generate the first prompt |
 | `rail handoff` | Generate model-specific portable context |
 | `rail verify` | Write a review pack, run checks, and generate an audit prompt |
@@ -23,6 +25,8 @@ Aliases are thin wrappers over existing commands.
 |---|---|
 | `rail r` | `rail resume` |
 | `rail n` | `rail next --copy` |
+| `rail p` | `rail plan --copy` |
+| `rail ph` | `rail phase --copy` |
 | `rail v` | `rail verify --copy` |
 | `rail s` | `rail ship` |
 | `rail snap` | `rail snapshot` |

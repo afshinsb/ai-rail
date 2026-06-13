@@ -4,11 +4,15 @@
 
 - Coding agent prompt: `rail next --copy`
 - Reviewer prompt: `rail verify --copy`
+- Planning prompt: `rail plan --copy`
+- Phase-audit prompt: `rail phase --copy`
 - New-chat handoff: `rail handoff --for chatgpt --copy`
 - Tool-specific handoff: `rail handoff --for codex --copy` or `rail handoff --for claude --copy`
 - Export root AI instruction files: `rail export`
 
 Do not manually invent prompts when AI Rail can generate them.
+
+`.rail/PROJECT.md` is project truth. GitHub Issues are task truth. The roadmap issue is phase truth. Coding happens one issue at a time; phase audit happens after several shipped issues and is not coding.
 
 ## Model 1: Codex-Based
 

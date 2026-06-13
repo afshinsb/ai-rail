@@ -113,6 +113,42 @@ gh issue create --title "Add todo body validation" --body-file issues/001-add-bo
 rail next --copy
 ```
 
+## Full Workflow
+
+For a new repo with no scoped issues yet:
+
+```bash
+rail plan --copy
+# paste into a GitHub-connected AI agent
+```
+
+The AI creates a phased roadmap and small GitHub Issues.
+
+Then work one issue at a time:
+
+```bash
+rail n
+# paste into coding agent
+
+rail v
+# paste into AI reviewer
+
+rail s "type(scope): message"
+```
+
+After several shipped issues, audit and update the phase:
+
+```bash
+rail phase --copy
+# paste into a GitHub-connected AI reviewer/agent
+```
+
+Then continue:
+
+```bash
+rail n
+```
+
 ## 60-Second Quickstart
 
 Inside any Git repo:
@@ -162,6 +198,8 @@ rail export
 |---|---|
 | `rail init` | Add AI Rail files to a repo |
 | `rail resume` | Show where you stopped |
+| `rail plan` | Generate a GitHub-connected AI prompt to create a phased issue roadmap |
+| `rail phase` | Generate a GitHub-connected AI prompt to audit/update the current roadmap phase |
 | `rail next` | Start the next issue and generate the first prompt |
 | `rail handoff` | Generate portable context for another AI session/model |
 | `rail verify` | Capture review info, run checks, and generate an audit prompt |
@@ -171,7 +209,7 @@ rail export
 | `rail demo` | Print the public demo script |
 | `rail release-check` | Check packaging/docs readiness |
 
-Common aliases are thin wrappers over the long commands: `rail r` for `resume`, `rail n` for `next --copy`, `rail v` for `verify --copy`, `rail s` for `ship`, `rail snap` for `snapshot`, `rail h`/`hc`/`hg`/`hl` for handoffs, `rail x`/`xd`/`xf` for exports, and `rail rc` for `release-check`.
+Common aliases are thin wrappers over the long commands: `rail r` for `resume`, `rail n` for `next --copy`, `rail p` for `plan --copy`, `rail ph` for `phase --copy`, `rail v` for `verify --copy`, `rail s` for `ship`, `rail snap` for `snapshot`, `rail h`/`hc`/`hg`/`hl` for handoffs, `rail x`/`xd`/`xf` for exports, and `rail rc` for `release-check`.
 
 Detailed commands such as `rail start`, `rail prompt`, `rail review`, `rail checks`, `rail commit`, `rail issue-close`, `rail done`, and `rail sync` remain available for manual control.
 
