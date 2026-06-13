@@ -60,10 +60,14 @@ def install_fake_gh(path: Path, monkeypatch, *, open_issues: list[dict], closed_
     shim = f"@echo off\r\n{sys.executable} \"{script}\" %*\r\n"
     (fake_dir / "gh.cmd").write_text(shim, encoding="utf-8")
     (fake_dir / "gh.bat").write_text(shim, encoding="utf-8")
+    posix = fake_dir / "gh"
+    posix.write_text(f"#!/usr/bin/env sh\nexec \"{sys.executable}\" \"{script}\" \"$@\"\n", encoding="utf-8")
+    posix.chmod(0o755)
     path_keys = [key for key in ENV if key.lower() == "path"] or ["PATH"]
+    existing_path = ENV.get(path_keys[0], "")
     for key in path_keys:
-        monkeypatch.setitem(ENV, key, str(fake_dir))
-    monkeypatch.setitem(ENV, "PATH", str(fake_dir))
+        monkeypatch.setitem(ENV, key, str(fake_dir) + os.pathsep + ENV.get(key, existing_path))
+    monkeypatch.setitem(ENV, "PATH", str(fake_dir) + os.pathsep + ENV.get("PATH", existing_path))
 
 
 def test_init_creates_node_config_with_check(tmp_path: Path) -> None:
