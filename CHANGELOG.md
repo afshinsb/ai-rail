@@ -2,6 +2,14 @@
 
 Maintained by Afshin Saberi.
 
+## 0.1.0a8
+
+- Clarified public install guidance around `pipx`.
+- Clarified Model 1, Model 2, and Model 3 workflows.
+- Aligned AI instruction files to reduce AI drift.
+- Updated demo and public-install wording.
+- No breaking changes.
+
 ## 0.1.0a7
 
 - Made `rail init --force` safer when refreshing initialized repositories.
