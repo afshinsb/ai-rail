@@ -2,6 +2,14 @@
 
 Maintained by Afshin Saberi.
 
+## 0.1.0a13
+
+- Cleaned `.rail/PROJECT.md` import behavior so default placeholder sections are removed after successful roadmap import.
+- Preserved real human notes outside managed roadmap markers.
+- Updated planning and phase prompts to replace managed memory blocks instead of appending duplicates.
+- Improved doctor/import behavior around stale `CHANGE_ME` placeholders.
+- No breaking changes.
+
 ## 0.1.0a12
 
 - Stabilized the import-based roadmap workflow.
