@@ -4,17 +4,17 @@ AI Rail gives your repo a portable project brain and a short daily workflow for 
 
 ## Install
 
-From a source checkout:
-
 ```bash
-pip install -e ".[dev]"
+pipx install ai-rail
 rail --version
 ```
 
-After public release:
+## Contributor/source install
 
 ```bash
-pipx install ai-rail
+git clone https://github.com/afshinsb/ai-rail.git
+cd ai-rail
+python -m pip install -e ".[dev]"
 ```
 
 ## Initialize a repo
@@ -45,7 +45,7 @@ rail init --stack static
 rail next --copy
 # paste/run the generated prompt in your AI coding tool
 rail verify --copy
-# paste the generated review prompt into ChatGPT/Claude for audit
+# paste the generated review prompt into an AI reviewer for audit
 rail ship "type(scope): message"
 ```
 

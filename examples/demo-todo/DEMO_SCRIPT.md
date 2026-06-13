@@ -5,7 +5,7 @@ This is the public demo flow for AI Rail.
 ## Setup
 
 ```bash
-pip install -e "../..[dev]"
+pipx install ai-rail
 rail --version
 rail init --stack node --project-name "AI Rail Demo TODO"
 rail doctor
@@ -24,7 +24,7 @@ gh issue create --title "Add todo body validation" --body-file issues/001-add-bo
 rail next --copy
 # paste the prompt into an AI coding tool
 rail verify --copy
-# paste the review prompt into ChatGPT/Claude for audit
+# paste the review prompt into an AI reviewer for audit
 rail handoff --for chatgpt --include-review --include-checks --copy
 rail ship "fix(api): add todo body validation"
 ```

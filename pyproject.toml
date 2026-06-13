@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-rail"
-version = "0.1.0a8"
+version = "0.1.0a9"
 description = "A local-first workflow rail and portable project brain for AI-assisted development."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,9 +24,11 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://theafshin.com"
+Homepage = "https://github.com/afshinsb/ai-rail"
 Repository = "https://github.com/afshinsb/ai-rail"
 Documentation = "https://github.com/afshinsb/ai-rail/tree/main/docs"
+Changelog = "https://github.com/afshinsb/ai-rail/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/afshinsb/ai-rail/issues"
 
 [project.scripts]
 rail = "ai_rail.cli:main"

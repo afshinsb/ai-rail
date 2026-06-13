@@ -12,7 +12,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.0a8"
+VERSION = "0.1.0a9"
 PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain for AI-assisted development."
 AUTHOR_NAME = "Afshin Saberi"
 PROJECT_REPOSITORY = "https://github.com/afshinsb/ai-rail"
@@ -523,7 +523,7 @@ def cmd_next(argv: list[str]) -> int:
     It intentionally does not change the underlying workflow engine.
     """
     parser = argparse.ArgumentParser(prog="rail next")
-    parser.add_argument("issue_ref", nargs="?", default="next", help="Issue number, next, latest, or lastest. Default: next.")
+    parser.add_argument("issue_ref", nargs="?", default="next", help="Issue number, next, or latest. Also accepts lastest as a typo alias. Default: next.")
     parser.add_argument("--model", choices=sorted(VALID_MODELS), default="codex")
     parser.add_argument("--copy", action="store_true", help="Copy generated Codex prompt to clipboard when possible.")
     parser.add_argument("--no-prompt", action="store_true", help="Only start the issue; do not generate a prompt.")
@@ -623,6 +623,9 @@ def cmd_ship(argv: list[str]) -> int:
         rc = delegate(["issue-close", "--commit"])
         if rc != 0:
             print("[rail] Ship stopped after commit succeeded; issue close failed. Active state was kept.")
+            print("[rail] Recovery: close the GitHub issue manually or fix `gh auth login`, then run:")
+            print("[rail]   rail done")
+            print("[rail]   rail sync")
             return rc
 
     if not ns.no_done:

@@ -2,12 +2,13 @@
 
 Maintained by Afshin Saberi.
 
-## 0.1.0a8
+## 0.1.0a9
 
-- Clarified public install guidance around `pipx`.
-- Clarified Model 1, Model 2, and Model 3 workflows.
-- Aligned AI instruction files to reduce AI drift.
-- Updated demo and public-install wording.
+- Added clearer prerequisites and `pipx` install guidance.
+- Improved PyPI project URLs for homepage, changelog, and issue tracking.
+- Put public install first in quickstart and demo guidance.
+- Clarified Model 1, Model 2, and Model 3 workflows and AI reviewer wording.
+- Added clearer partial `rail ship` recovery instructions.
 - No breaking changes.
 
 ## 0.1.0a7

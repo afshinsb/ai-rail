@@ -582,6 +582,9 @@ def test_ship_reports_partial_state_when_issue_close_fails(tmp_path: Path) -> No
     assert "fake commit" in result.stdout
     assert "fake issue-close" in result.stdout
     assert "Ship stopped after commit succeeded; issue close failed. Active state was kept." in result.stdout
+    assert "Recovery: close the GitHub issue manually or fix `gh auth login`, then run:" in result.stdout
+    assert "rail done" in result.stdout
+    assert "rail sync" in result.stdout
 
 
 def test_local_runtime_version_matches_public_alpha(tmp_path: Path) -> None:
@@ -599,7 +602,7 @@ def test_local_runtime_version_matches_public_alpha(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert "AI Rail v0.1.0a8" in result.stdout
+    assert "AI Rail v0.1.0a9" in result.stdout
 
 
 
@@ -800,7 +803,7 @@ def test_version_output_includes_author_and_repository() -> None:
     result = run_cli(ROOT, "--version")
 
     assert result.returncode == 0
-    assert "AI Rail 0.1.0a8" in result.stdout
+    assert "AI Rail 0.1.0a9" in result.stdout
     assert "Created by Afshin Saberi" in result.stdout
     assert "https://github.com/afshinsb/ai-rail" in result.stdout
 
@@ -811,7 +814,7 @@ def test_about_outputs_project_metadata() -> None:
     assert result.returncode == 0
     assert "AI Rail" in result.stdout
     assert "A local-first workflow rail and portable project brain for AI-assisted development." in result.stdout
-    assert "Version: 0.1.0a8" in result.stdout
+    assert "Version: 0.1.0a9" in result.stdout
     assert "Author: Afshin Saberi" in result.stdout
     assert "Repository: https://github.com/afshinsb/ai-rail" in result.stdout
     assert "Website: https://theafshin.com" in result.stdout
@@ -822,9 +825,11 @@ def test_pyproject_has_professional_author_and_project_urls() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
     assert 'authors = [{ name = "Afshin Saberi" }]' in pyproject
-    assert 'Homepage = "https://theafshin.com"' in pyproject
+    assert 'Homepage = "https://github.com/afshinsb/ai-rail"' in pyproject
     assert 'Repository = "https://github.com/afshinsb/ai-rail"' in pyproject
     assert 'Documentation = "https://github.com/afshinsb/ai-rail/tree/main/docs"' in pyproject
+    assert 'Changelog = "https://github.com/afshinsb/ai-rail/blob/main/CHANGELOG.md"' in pyproject
+    assert '"Bug Tracker" = "https://github.com/afshinsb/ai-rail/issues"' in pyproject
 
 
 def test_phase6_help_lists_public_phase_commands() -> None:

@@ -50,7 +50,7 @@ Run the short daily loop:
 rail next --copy
 # paste/run the generated prompt in your AI coding tool
 rail verify --copy
-# paste the generated review prompt into ChatGPT/Claude for audit
+# paste the generated review prompt into your AI reviewer for audit
 rail handoff --for chatgpt --include-review --include-checks --copy
 rail ship "fix(api): add todo body validation"
 ```

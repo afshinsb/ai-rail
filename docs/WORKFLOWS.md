@@ -8,7 +8,7 @@ AI Rail supports one daily loop and three interaction models. The short commands
 rail next --copy
 # paste/run the generated prompt in your AI coding tool
 rail verify --copy
-# paste the generated review prompt into ChatGPT/Claude for audit
+# paste the generated review prompt into your AI reviewer for audit
 rail ship "type(scope): message"
 ```
 
