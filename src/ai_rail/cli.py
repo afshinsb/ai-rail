@@ -605,18 +605,6 @@ The GitHub roadmap issue is the remote roadmap mirror.
 AI/planning agents create and update the roadmap.
 AI Rail imports roadmap memory and tracks completed issue state.
 
-## Product notes
-
-CHANGE_ME: What does this project do?
-
-## Stack
-
-CHANGE_ME: Main technologies, framework, runtime, database, deployment target.
-
-## Non-negotiables
-
-CHANGE_ME: Constraints, architecture rules, safety rules, and things AI must not break.
-
 {LOCAL_ROADMAP_START}
 
 {managed.strip()}
@@ -634,6 +622,40 @@ CHANGE_ME: Constraints, architecture rules, safety rules, and things AI must not
 """
 
 
+def is_placeholder_project_memory(text: str) -> bool:
+    if "CHANGE_ME" not in text:
+        return False
+    required = ["Product notes", "Stack", "Non-negotiables", "Roadmap maintenance rules"]
+    if not all(item in text for item in required):
+        return False
+    stripped = re.sub(r"<!-- AI RAIL MANAGED ROADMAP START -->.*?<!-- AI RAIL MANAGED ROADMAP END -->", "", text, flags=re.DOTALL)
+    defaults = [
+        "# Project Memory",
+        "This file is the local AI Rail project memory and roadmap brain.",
+        "GitHub Issues are the active task execution queue.",
+        "The GitHub roadmap issue is the remote roadmap mirror.",
+        "AI/planning agents create and update the roadmap.",
+        "AI Rail imports roadmap memory and tracks completed issue state.",
+        "## Product notes",
+        "CHANGE_ME: What does this project do?",
+        "## Stack",
+        "CHANGE_ME: Main technologies, framework, runtime, database, deployment target.",
+        "## Non-negotiables",
+        "CHANGE_ME: Constraints, architecture rules, safety rules, and things AI must not break.",
+        "## Roadmap maintenance rules",
+        "- Keep the full roadmap here.",
+        "- Keep only the active execution slice as GitHub implementation issues.",
+        "- Do not create `.rail/ROADMAP.md`.",
+        "- Do not use GitHub Issues for the entire 100-task roadmap.",
+        "- Use `rail import` after `rail plan --copy` or `rail phase --copy`.",
+        "- Use `rail s` to ship/close one issue and mark it completed locally.",
+    ]
+    remainder = stripped
+    for item in defaults:
+        remainder = remainder.replace(item, "")
+    return not remainder.strip()
+
+
 def update_local_project_memory(managed: str) -> None:
     path = rail_dir() / "PROJECT.md"
     new_block = f"{LOCAL_ROADMAP_START}\n\n{managed.strip()}\n\n{LOCAL_ROADMAP_END}"
@@ -641,13 +663,13 @@ def update_local_project_memory(managed: str) -> None:
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     existing = path.read_text(encoding="utf-8", errors="replace")
+    if is_placeholder_project_memory(existing):
+        path.write_text(project_memory_template(managed), encoding="utf-8")
+        return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
         before = existing.split(LOCAL_ROADMAP_START, 1)[0].rstrip()
         after = existing.split(LOCAL_ROADMAP_END, 1)[1].lstrip()
         path.write_text(f"{before}\n\n{new_block}\n\n{after}", encoding="utf-8")
-        return
-    if "CHANGE_ME" in existing and len(existing.strip()) < 2500:
-        path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     path.write_text(existing.rstrip() + "\n\n" + new_block + "\n", encoding="utf-8")
 
@@ -954,6 +976,12 @@ Put the full roadmap/project memory inside the roadmap issue body. Include this 
 ...
 {REMOTE_MEMORY_END}
 
+The managed block should be complete enough to become the useful body of local `.rail/PROJECT.md` after `rail import`.
+Do not include `CHANGE_ME`.
+Do not duplicate default placeholder sections.
+If updating an existing roadmap issue, replace the old managed block instead of appending another one.
+If old roadmap content exists outside the managed block, update it only if needed; do not create duplicate roadmap sections.
+
 Inside that block, include:
 - product summary
 - stack
@@ -1066,6 +1094,10 @@ Update the GitHub roadmap issue. Update the managed project-memory block inside 
 {REMOTE_MEMORY_START}
 ...
 {REMOTE_MEMORY_END}
+
+Replace/update the existing managed block. Do not append duplicate managed blocks.
+Do not leave stale phase/task sections.
+Do not include `CHANGE_ME`.
 
 AI Rail will import that roadmap issue into local `.rail/PROJECT.md`; do not edit `.rail/PROJECT.md` remotely unless explicitly asked.
 

@@ -380,6 +380,9 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert "AI RAIL PROJECT MEMORY START" in result.stdout
     assert "run `rail import` locally" in result.stdout
     assert "Do not edit `.rail/PROJECT.md` remotely" in result.stdout
+    assert "Do not include `CHANGE_ME`" in result.stdout
+    assert "replace the old managed block instead of appending another one" in result.stdout
+    assert "Do not duplicate default placeholder sections" in result.stdout
     assert "current state" in result.stdout
     assert "target state" in result.stdout
     assert "full phased roadmap" in result.stdout
@@ -424,6 +427,8 @@ def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) ->
     assert "phase-audit agent" in result.stdout
     assert "AI RAIL PROJECT MEMORY START" in result.stdout
     assert "run `rail import` locally" in result.stdout
+    assert "Do not append duplicate managed blocks" in result.stdout
+    assert "Do not include `CHANGE_ME`" in result.stdout
     assert "update completed work, current phase, next recommended issue" in result.stdout
     assert "mark completed tasks/phases in the roadmap issue memory block" in result.stdout
     assert "Review upcoming phases" in result.stdout
@@ -509,6 +514,26 @@ def test_import_extracts_managed_memory_and_writes_project(tmp_path: Path, monke
     assert "Closed issues: 1" in result.stdout
 
 
+def test_import_replaces_default_project_placeholders(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static", "--project-name", "Clean Import")
+    body = "<!-- AI RAIL PROJECT MEMORY START -->\n## Product summary\n\nReal app.\n\n## Stack\n\nPython.\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Clean", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "CHANGE_ME" not in text
+    before_block = text.split("<!-- AI RAIL MANAGED ROADMAP START -->", 1)[0]
+    assert "## Product notes" not in before_block
+    assert "## Stack" not in before_block
+    assert "## Non-negotiables" not in before_block
+    doctor = run_cli(tmp_path, "doctor")
+    assert "PROJECT.md contains CHANGE_ME placeholders" not in doctor.stdout
+
+
 def test_import_preserves_user_content_outside_managed_markers(tmp_path: Path, monkeypatch) -> None:
     git_init(tmp_path)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
@@ -526,6 +551,24 @@ def test_import_preserves_user_content_outside_managed_markers(tmp_path: Path, m
     assert "footer" in text
     assert "new roadmap" in text
     assert "old" not in text
+
+
+def test_import_appends_managed_block_after_human_notes_without_markers(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    project = tmp_path / ".rail" / "PROJECT.md"
+    project.write_text("# Human project notes\n\nThis app handles invoices.\n", encoding="utf-8")
+    body = "<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n- [ ] #2 Build invoices\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = project.read_text(encoding="utf-8")
+    assert "This app handles invoices." in text
+    assert "AI RAIL MANAGED ROADMAP START" in text
+    assert "- [ ] #2 Build invoices" in text
 
 
 def test_next_does_not_import_and_warns_on_placeholders(tmp_path: Path, monkeypatch) -> None:

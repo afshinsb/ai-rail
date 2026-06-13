@@ -4,6 +4,8 @@
 
 `.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
+On first import, `rail import` replaces the placeholder project-memory template with the imported managed roadmap memory. Later imports update only the managed block and preserve human notes outside the markers.
+
 | Command | Purpose |
 |---|---|
 | `rail init` | Install AI Rail files into the current repo |
