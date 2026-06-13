@@ -1,6 +1,6 @@
 # AI Rail
 
-[![Tests](https://github.com/afshinsb/ai-rail/actions/workflows/tests.yml/badge.svg)](https://github.com/afshinsb/ai-rail/actions/workflows/tests.yml)
+[![Tests](https://github.com/afshinsb/ai-rail/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/afshinsb/ai-rail/actions/workflows/tests.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](docs/RELEASE.md)
