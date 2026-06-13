@@ -2,6 +2,14 @@
 
 Maintained by Afshin Saberi.
 
+## 0.1.0a12
+
+- Stabilized the import-based roadmap workflow.
+- Fixed `rail ship` rollback so `.rail/PROJECT.md` is restored if the ship commit fails.
+- Fixed generated demo ordering so `rail import` runs after the planning AI updates the roadmap issue.
+- Kept `.rail/PROJECT.md` as the local roadmap brain and GitHub Issues as the active execution queue.
+- No breaking changes.
+
 ## 0.1.0a11
 
 - Added `rail plan` to generate a GitHub-connected AI prompt for phased roadmap creation.
