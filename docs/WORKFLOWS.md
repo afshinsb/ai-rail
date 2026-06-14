@@ -6,6 +6,8 @@ AI Rail supports one daily loop and three interaction models. The short commands
 
 `.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
+Roadmap task state lives in exactly one strict `AI RAIL ROADMAP START/END` block inside `.rail/PROJECT.md`. Rail only marks tasks complete inside that block. Future tasks use `TBD | Pn-Txx | title`; the phase AI creates the next issue slice and replaces `TBD` with issue numbers when those GitHub issues exist.
+
 Use `rail plan --copy` before the first coding issue exists. Paste it into a GitHub-connected AI agent so it can audit the repo, create or update one phased roadmap issue, and create only the first active execution slice as scoped GitHub Issues. Then run `rail import` to import the roadmap issue into `.rail/PROJECT.md`.
 
 Use `rail next --copy` after issues exist. It still starts one issue at a time and generates the coding-agent prompt for that single issue.
@@ -21,6 +23,8 @@ rail verify --copy
 # paste the generated review prompt into your AI reviewer for audit
 rail ship "type(scope): message"
 ```
+
+`rail verify` is the expensive gate: it captures review context, runs checks, and saves a verified snapshot. `rail ship` is the fast finalizer: it trusts that snapshot when the working tree still matches it, and only reruns checks when you pass `--recheck` or when legacy recovery is needed before a snapshot exists.
 
 Use `rail resume` before starting if you are returning to a repo after time away. Use `rail handoff --for chatgpt|codex|claude|cursor|aider --copy` when moving the task into another AI session.
 

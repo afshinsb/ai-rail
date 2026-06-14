@@ -68,6 +68,14 @@ rail verify --copy
 rail ship "type(scope): message"
 ```
 
+`rail verify` runs checks and saves a verified snapshot. `rail ship` ships only if the working tree still matches that snapshot, and normally does not rerun checks. Use `rail ship --recheck "type(scope): message"` to force a check rerun during ship.
+
+For Node repos, `rail init --stack node` chooses the first available `package.json` script from `check`, `typecheck`, `lint`, `test`, then `build`. You can run focused checks directly:
+
+```bash
+rail checks --run "npm run typecheck"
+```
+
 After several shipped issues, audit and update the roadmap phase:
 
 ```bash

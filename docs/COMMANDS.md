@@ -6,6 +6,8 @@
 
 On first import, `rail import` replaces the placeholder project-memory template with the imported managed roadmap memory. Later imports update only the managed block and preserve human notes outside the markers.
 
+Imported project memory must contain one Rail-readable `AI RAIL ROADMAP START/END` block. `rail doctor` warns when `.rail/PROJECT.md` is missing that block or has malformed task lines, duplicate task IDs, duplicate issue refs, or invalid phase statuses.
+
 | Command | Purpose |
 |---|---|
 | `rail init` | Install AI Rail files into the current repo |
@@ -99,6 +101,17 @@ rail next --copy
 rail verify --copy
 rail ship "fix(scope): message"
 ```
+
+`rail verify` runs checks and saves a verified snapshot of the reviewed diff. `rail ship` trusts that snapshot when the working tree still matches it, so the normal ship path does not rerun checks. Use `rail ship --recheck "fix(scope): message"` when you intentionally want checks rerun during ship. The review guard, dangerous-path guard, and explicit escape hatches such as `--allow-missing-checks`, `--allow-stale`, and `--force` still apply.
+
+### Run A Focused Check
+
+```bash
+rail checks --run "npm run typecheck"
+rail checks --run "npm run typecheck" --run "npm run lint"
+```
+
+For Node repos, `rail init --stack node` inspects `package.json` scripts and chooses the first available script from `check`, `typecheck`, `lint`, `test`, then `build`. `rail doctor` warns when the configured default `npm run check` does not exist and a better script is available.
 
 ### Continue In A New AI Chat
 

@@ -193,6 +193,8 @@ rail v
 rail s "type(scope): message"
 ```
 
+`rail verify` runs checks and saves a verified snapshot of the reviewed diff. `rail ship` trusts that snapshot when the working tree still matches it, so the normal ship path does not rerun checks. Use `rail ship --recheck "type(scope): message"` when you intentionally want checks rerun during ship.
+
 When switching AI tools or opening a new chat:
 
 ```bash
@@ -228,9 +230,18 @@ Common aliases are thin wrappers over the long commands: `rail r` for `resume`, 
 
 Detailed commands such as `rail start`, `rail prompt`, `rail review`, `rail checks`, `rail commit`, `rail issue-close`, `rail done`, and `rail sync` remain available for manual control.
 
+For Node repos, `rail init --stack node` inspects `package.json` scripts and chooses the first available check command from `check`, `typecheck`, `lint`, `test`, then `build`. You can override checks manually:
+
+```bash
+rail checks --run "npm run typecheck"
+rail checks --run "npm run typecheck" --run "npm run lint"
+```
+
 ## Portable Project Brain
 
 `.rail/PROJECT.md` is the full local project memory, roadmap brain, phase tracker, and next-task direction file. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
+
+`.rail/PROJECT.md` may contain human-readable context, but roadmap task state lives in exactly one `AI RAIL ROADMAP START/END` block. Rail only updates task status inside that strict block. Task lines use `- [ ] ISSUE | TASK_ID | TITLE`, where `ISSUE` is `#123` for active GitHub issues or `TBD` for future tasks. The phase AI creates the next issue slice and replaces `TBD` with issue numbers during `rail phase --copy` / `rail import`.
 
 `rail snapshot` writes:
 
@@ -262,8 +273,9 @@ Exports are safe by default. AI Rail updates its own managed block when markers 
 
 `rail ship` refuses unsafe commits by default when:
 
-- the review pack is missing or stale
-- checks are missing, failed, or stale
+- there is no passing verified snapshot from `rail verify`
+- files changed after the last verified snapshot
+- configured checks changed after the last verified snapshot
 - dangerous/generated files such as `.env`, keys, local databases, `node_modules/`, `dist/`, or `.rail/state/` are changed
 
 Escape hatches exist for advanced users, but the normal path is intentionally conservative.

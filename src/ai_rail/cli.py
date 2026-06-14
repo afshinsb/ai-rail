@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -12,7 +13,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.0a13"
+VERSION = "0.1.0a14"
 PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain for AI-assisted development."
 AUTHOR_NAME = "Afshin Saberi"
 PROJECT_REPOSITORY = "https://github.com/afshinsb/ai-rail"
@@ -38,6 +39,7 @@ COMMAND_ALIASES = {
     "xd": ["export", "--dry-run"],
     "xf": ["export", "--force"],
     "rc": ["release-check"],
+    "clear": ["clear-active"],
 }
 PRESERVED_TEMPLATE_DIRS = {
     Path(".rail/state"),
@@ -49,6 +51,11 @@ REMOTE_MEMORY_START = "<!-- AI RAIL PROJECT MEMORY START -->"
 REMOTE_MEMORY_END = "<!-- AI RAIL PROJECT MEMORY END -->"
 LOCAL_ROADMAP_START = "<!-- AI RAIL MANAGED ROADMAP START -->"
 LOCAL_ROADMAP_END = "<!-- AI RAIL MANAGED ROADMAP END -->"
+RAIL_ROADMAP_START = "<!-- AI RAIL ROADMAP START -->"
+RAIL_ROADMAP_END = "<!-- AI RAIL ROADMAP END -->"
+RAIL_TASK_RE = re.compile(r"^- \[(?P<status>[ x])\] (?P<issue>#\d+|TBD) \| (?P<task_id>P\d+-T\d+) \| (?P<title>.+)$")
+RAIL_PHASE_RE = re.compile(r"^## Phase (?P<phase>P\d+)\b")
+RAIL_PHASE_STATUSES = {"planned", "active", "complete", "blocked"}
 
 
 def root() -> Path:
@@ -77,6 +84,10 @@ def history_path() -> Path:
 
 def checks_path() -> Path:
     return state() / "last-checks.md"
+
+
+def verified_path() -> Path:
+    return state() / "last-verify.json"
 
 
 def review_path() -> Path:
@@ -119,12 +130,84 @@ def is_unconfigured_config_value(value: Any) -> bool:
     return value is None or value == "" or value == "CHANGE_ME"
 
 
+NODE_CHECK_SCRIPT_PRIORITY = ["check", "typecheck", "lint", "test", "build"]
+
+
+def package_json_scripts() -> dict[str, Any]:
+    package_path = root() / "package.json"
+    if not package_path.exists():
+        return {}
+    try:
+        data = json.loads(package_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    scripts = data.get("scripts")
+    return scripts if isinstance(scripts, dict) else {}
+
+
+def detected_node_check_command() -> str | None:
+    scripts = package_json_scripts()
+    for script in NODE_CHECK_SCRIPT_PRIORITY:
+        if script in scripts:
+            return f"npm run {script}"
+    return None
+
+
+def suggested_node_check_replacement() -> str | None:
+    return detected_node_check_command()
+
+
+def npm_run_script(command: str) -> str | None:
+    match = re.match(r"^\s*npm(?:\.cmd)?\s+(?:run|run-script)\s+([^\s]+)", command)
+    if not match:
+        return None
+    return match.group(1).strip("\"'")
+
+
+def check_output_mentions_missing_npm_script(output: str, script: str) -> bool:
+    if not output:
+        return False
+    missing_script = re.search(r"Missing script:\s*[\"']?" + re.escape(script) + r"[\"']?", output, re.IGNORECASE)
+    return bool(missing_script or re.search(r"npm\s+(?:error|ERR!)\s+Missing script", output, re.IGNORECASE))
+
+
+def missing_npm_check_recovery(checks: list[Any], output: str) -> tuple[str, str] | None:
+    scripts = package_json_scripts()
+    if not scripts:
+        return None
+    for command in checks:
+        if not isinstance(command, str):
+            continue
+        script = npm_run_script(command)
+        if not script:
+            continue
+        if script in scripts:
+            continue
+        if not check_output_mentions_missing_npm_script(output, script):
+            continue
+        replacement = detected_node_check_command()
+        if replacement and replacement != command:
+            return command, replacement
+    return None
+
+
+def can_update_stale_default_node_check(checks: list[Any], failed_command: str, replacement: str) -> bool:
+    failed_script = npm_run_script(failed_command)
+    return (
+        checks == ["npm run check"]
+        and failed_command == "npm run check"
+        and failed_script == "check"
+        and replacement != failed_command
+        and "check" not in package_json_scripts()
+    )
+
+
 def checks_for_stack(stack: str) -> list[str]:
     if stack == "python":
         return ["python -m pytest"]
     if stack == "static":
         return []
-    return ["npm run check"]
+    return [detected_node_check_command() or "npm run check"]
 
 
 def is_unconfigured_checks(value: Any) -> bool:
@@ -132,7 +215,13 @@ def is_unconfigured_checks(value: Any) -> bool:
         return True
     if value == []:
         return True
-    return isinstance(value, list) and value in [checks_for_stack("node"), checks_for_stack("python"), checks_for_stack("static")]
+    default_checks = [
+        ["npm run check"],
+        checks_for_stack("node"),
+        checks_for_stack("python"),
+        checks_for_stack("static"),
+    ]
+    return isinstance(value, list) and value in default_checks
 
 
 def configured_repository(config: dict[str, Any]) -> str:
@@ -245,10 +334,24 @@ def rewrite_core_output(text: str) -> str:
     return re.sub(r"(?<![a-zA-Z])o\s+(?=[a-z])", "rail ", text)
 
 
-def delegate(args: list[str]) -> int:
+def delegate(args: list[str], *, stream: bool = False) -> int:
     if not local_py().exists():
         print("No .rail/rail.py found. Run: rail init", file=sys.stderr)
         return 1
+    if stream:
+        proc = subprocess.Popen(
+            [sys.executable, str(local_py()), *args],
+            cwd=root(),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            print(rewrite_core_output(line), end="")
+        return proc.wait(timeout=300)
     result = subprocess.run(
         [sys.executable, str(local_py()), *args],
         cwd=root(),
@@ -464,6 +567,36 @@ def checks_result() -> str:
     return "passed" if all(c == 0 for c in codes) else "failed"
 
 
+def latest_change_mtime(paths: list[str]) -> float | None:
+    mtimes: list[float] = []
+    for rel in paths:
+        path = root() / rel
+        if path.exists():
+            try:
+                mtimes.append(path.stat().st_mtime)
+            except OSError:
+                continue
+    return max(mtimes) if mtimes else None
+
+
+def artifact_is_fresh(path: Path, paths: list[str]) -> bool:
+    if not path.exists():
+        return False
+    latest = latest_change_mtime(paths)
+    if latest is None:
+        return True
+    return path.stat().st_mtime + 1 >= latest
+
+
+def check_block_reason() -> str | None:
+    state_value = checks_result()
+    if state_value != "passed":
+        return state_value
+    if not artifact_is_fresh(checks_path(), changed_files()):
+        return "stale"
+    return None
+
+
 def current_branch() -> str:
     r = run(["git", "branch", "--show-current"], timeout=15)
     return r.stdout.strip() or "unknown"
@@ -491,6 +624,117 @@ def changed_files() -> list[str]:
                 files.append(parts[i])
         i += 1
     return sorted(set(files))
+
+
+def untracked_files() -> list[str]:
+    r = run(["git", "ls-files", "--others", "--exclude-standard"], timeout=30)
+    if r.returncode != 0:
+        return []
+    return sorted(line for line in r.stdout.splitlines() if line.strip())
+
+
+def is_probably_text_file(path: Path, max_bytes: int = 20000) -> bool:
+    try:
+        if path.stat().st_size > max_bytes:
+            return False
+        sample = path.read_bytes()[:4096]
+    except OSError:
+        return False
+    return b"\x00" not in sample
+
+
+def reviewed_untracked_text_contents(max_file_chars: int = 12000, max_total_chars: int = 50000) -> str:
+    sections: list[str] = []
+    total = 0
+    for rel in untracked_files():
+        path = root() / rel
+        if not path.is_file():
+            continue
+        if not is_probably_text_file(path):
+            block = f"### {rel}\n\n[skipped: binary or larger than 20KB]\n"
+        else:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if len(text) > max_file_chars:
+                text = text[:max_file_chars] + "\n[truncated]\n"
+            block = f"### {rel}\n\n```text\n{text}\n```\n"
+        if total + len(block) > max_total_chars:
+            sections.append("[untracked file content truncated]\n")
+            break
+        sections.append(block)
+        total += len(block)
+    return "\n".join(sections).strip()
+
+
+def git_diff_for_fingerprint() -> str:
+    r = run(["git", "diff", "--", "."], timeout=30)
+    return r.stdout if r.returncode == 0 else r.stderr
+
+
+def active_issue_number() -> Any:
+    item = active()
+    if not item:
+        return None
+    issue = item.get("issue", {})
+    return issue.get("number")
+
+
+def verify_fingerprint(check_commands: list[str]) -> str:
+    payload = {
+        "active_issue": active_issue_number(),
+        "branch": current_branch(),
+        "changed_files": changed_files(),
+        "untracked_files": untracked_files(),
+        "git_diff": git_diff_for_fingerprint(),
+        "untracked_text": reviewed_untracked_text_contents(),
+        "check_commands": check_commands,
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8", errors="replace")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def configured_check_commands(override: list[str] | None = None) -> list[str]:
+    if override:
+        return override
+    config = cfg()
+    checks = config.get("checks") or []
+    return [str(command) for command in checks]
+
+
+def write_verify_snapshot(check_commands: list[str], check_result: str) -> None:
+    snapshot = {
+        "version": 1,
+        "created_at": utc_now(),
+        "active_issue": active_issue_number(),
+        "branch": current_branch(),
+        "changed_files": changed_files(),
+        "untracked_files": untracked_files(),
+        "check_commands": check_commands,
+        "check_result": check_result,
+        "fingerprint": verify_fingerprint(check_commands),
+    }
+    write_json(verified_path(), snapshot)
+
+
+def validate_verify_snapshot(*, check_commands: list[str]) -> tuple[bool, str]:
+    snapshot = read_json(verified_path(), None)
+    if not isinstance(snapshot, dict) or snapshot.get("check_result") != "passed":
+        return False, "Error: no passing verify snapshot found. Run: rail v"
+    if snapshot.get("active_issue") != active_issue_number():
+        return False, "Error: active issue changed after last review. Run: rail v"
+    if snapshot.get("branch") != current_branch():
+        return False, "Error: branch changed after last review. Run: rail v"
+    if snapshot.get("check_commands") != check_commands:
+        return False, "Error: check config changed after last review. Run: rail v"
+    if snapshot.get("fingerprint") != verify_fingerprint(check_commands):
+        return False, "Error: files changed after last review. Run: rail v"
+    return True, "[rail] Verified snapshot is fresh."
+
+
+def refresh_review_and_check_artifacts() -> None:
+    now = dt.datetime.now().timestamp()
+    for path in (review_path(), checks_path()):
+        if path.exists():
+            os.utime(path, (now, now))
 
 
 def latest_commit() -> str | None:
@@ -595,6 +839,98 @@ Imported from GitHub roadmap issue #{roadmap.get('number')}: {roadmap.get('title
 """
 
 
+def default_strict_roadmap_block() -> str:
+    return f"""{RAIL_ROADMAP_START}
+
+## Phase P1 - Foundation
+Status: active
+
+### Goal
+Roadmap needs a Rail-readable phase goal.
+
+### Completion criteria
+- Replace this fallback block via rail phase --copy and rail import.
+
+### Tasks
+- [ ] TBD | P1-T01 | Replace fallback roadmap with Rail-readable tasks
+
+{RAIL_ROADMAP_END}"""
+
+
+def extract_strict_roadmap_blocks(text: str) -> list[str]:
+    pattern = re.escape(RAIL_ROADMAP_START) + r".*?" + re.escape(RAIL_ROADMAP_END)
+    return re.findall(pattern, text, flags=re.DOTALL)
+
+
+def strict_roadmap_inner(text: str) -> str | None:
+    blocks = extract_strict_roadmap_blocks(text)
+    if len(blocks) != 1:
+        return None
+    block = blocks[0]
+    return block.split(RAIL_ROADMAP_START, 1)[1].split(RAIL_ROADMAP_END, 1)[0]
+
+
+def ensure_strict_roadmap(managed: str) -> tuple[str, list[str]]:
+    warnings: list[str] = []
+    blocks = extract_strict_roadmap_blocks(managed)
+    if len(blocks) == 1:
+        return managed.strip(), warnings
+    if len(blocks) > 1:
+        first = blocks[0]
+        managed = re.sub(
+            re.escape(RAIL_ROADMAP_START) + r".*?" + re.escape(RAIL_ROADMAP_END),
+            lambda match: first if match.start() == managed.find(first) else "",
+            managed,
+            flags=re.DOTALL,
+        )
+        warnings.append("Imported roadmap had duplicate strict roadmap blocks; kept the first one.")
+        return managed.strip(), warnings
+    warnings.append("Imported roadmap is not Rail-readable. Run rail phase --copy, then rail import.")
+    return (managed.rstrip() + "\n\n" + default_strict_roadmap_block()).strip(), warnings
+
+
+def validate_rail_roadmap(text: str) -> list[str]:
+    warnings: list[str] = []
+    blocks = extract_strict_roadmap_blocks(text)
+    if not blocks:
+        return ["PROJECT.md roadmap is not Rail-readable. Run rail phase --copy, then rail import."]
+    if len(blocks) > 1:
+        warnings.append("PROJECT.md has duplicate AI RAIL ROADMAP blocks.")
+    inner = blocks[0].split(RAIL_ROADMAP_START, 1)[1].split(RAIL_ROADMAP_END, 1)[0]
+    task_ids: set[str] = set()
+    issues: set[str] = set()
+    saw_phase = False
+    for line in inner.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if RAIL_PHASE_RE.match(stripped):
+            saw_phase = True
+            continue
+        if stripped.startswith("Status:"):
+            status = stripped.split(":", 1)[1].strip()
+            if status not in RAIL_PHASE_STATUSES:
+                warnings.append(f"PROJECT.md roadmap has invalid phase status `{status}`.")
+            continue
+        if stripped.startswith("- ["):
+            match = RAIL_TASK_RE.match(stripped)
+            if not match:
+                warnings.append(f"PROJECT.md roadmap has malformed task line: {stripped}")
+                continue
+            task_id = match.group("task_id")
+            issue = match.group("issue")
+            if task_id in task_ids:
+                warnings.append(f"PROJECT.md roadmap has duplicate task ID `{task_id}`.")
+            task_ids.add(task_id)
+            if issue != "TBD":
+                if issue in issues:
+                    warnings.append(f"PROJECT.md roadmap has duplicate issue ref `{issue}`.")
+                issues.add(issue)
+    if not saw_phase:
+        warnings.append("PROJECT.md roadmap has no `## Phase Pn` sections.")
+    return warnings
+
+
 def project_memory_template(managed: str) -> str:
     return f"""# Project Memory
 
@@ -658,12 +994,15 @@ def is_placeholder_project_memory(text: str) -> bool:
 
 def update_local_project_memory(managed: str) -> None:
     path = rail_dir() / "PROJECT.md"
+    managed, warnings = ensure_strict_roadmap(managed)
+    for warning in warnings:
+        print(f"[rail] Warning: {warning}")
     new_block = f"{LOCAL_ROADMAP_START}\n\n{managed.strip()}\n\n{LOCAL_ROADMAP_END}"
     if not path.exists():
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     existing = path.read_text(encoding="utf-8", errors="replace")
-    if is_placeholder_project_memory(existing):
+    if is_placeholder_project_memory(existing) or ("CHANGE_ME:" in existing and "## Roadmap maintenance rules" in existing and RAIL_ROADMAP_START in existing):
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
@@ -680,26 +1019,54 @@ def mark_project_issue_completed(issue_number: Any, title: str | None = None) ->
         return False, None
     text = path.read_text(encoding="utf-8", errors="replace")
     num = str(issue_number)
-    patterns = [
-        (rf"(^\s*-\s*)\[\s\](\s*#{re.escape(num)}\b)", rf"\1[x]\2"),
-        (rf"(^\s*-\s*)\[\s\](\s*Issue\s+#{re.escape(num)}\b)", rf"\1[x]\2"),
-        (rf"(^\s*-\s*)\[\s\](\s*GH-{re.escape(num)}\b)", rf"\1[x]\2"),
-    ]
+    blocks = extract_strict_roadmap_blocks(text)
+    if len(blocks) != 1:
+        print(f"[rail] No matching Rail-readable roadmap task found for issue #{num}.")
+        return False, None
+    block = blocks[0]
+    lines = block.splitlines()
     changed = False
-    for pattern, repl in patterns:
-        text, count = re.subn(pattern, repl, text, flags=re.MULTILINE)
-        changed = changed or count > 0
+    phase_start: int | None = None
+    matched_line: int | None = None
+    for idx, line in enumerate(lines):
+        if RAIL_PHASE_RE.match(line.strip()):
+            phase_start = idx
+        match = RAIL_TASK_RE.match(line.strip())
+        if match and match.group("issue") == f"#{num}":
+            if match.group("status") == " ":
+                lines[idx] = line.replace("- [ ]", "- [x]", 1)
+                changed = True
+            matched_line = idx
+            break
+    if matched_line is None:
+        print(f"[rail] No matching Rail-readable roadmap task found for issue #{num}.")
+        return False, None
+    if not changed:
+        return False, None
 
-    if LOCAL_ROADMAP_START in text and "## Completed work" in text and f"#{num}" not in text.split("## Completed work", 1)[1].split("\n## ", 1)[0]:
-        entry = f"- #{num} {title or 'Completed issue'} - shipped locally."
-        text = text.replace("## Completed work", "## Completed work\n\n" + entry, 1)
-        changed = True
+    phase_hint: str | None = None
+    if phase_start is not None:
+        phase_end = len(lines)
+        for idx in range(phase_start + 1, len(lines)):
+            if RAIL_PHASE_RE.match(lines[idx].strip()):
+                phase_end = idx
+                break
+        phase_lines = lines[phase_start:phase_end]
+        task_lines = [line for line in phase_lines if RAIL_TASK_RE.match(line.strip())]
+        if task_lines and all(RAIL_TASK_RE.match(line.strip()).group("status") == "x" for line in task_lines if RAIL_TASK_RE.match(line.strip())):
+            for idx in range(phase_start, phase_end):
+                if lines[idx].strip().startswith("Status:"):
+                    if lines[idx].strip() != "Status: complete":
+                        lines[idx] = "Status: complete"
+                    break
+            phase_match = RAIL_PHASE_RE.match(lines[phase_start].strip())
+            phase = phase_match.group("phase") if phase_match else "phase"
+            phase_hint = f"Phase {phase} is complete. Run rail phase --copy."
 
-    if changed:
-        path.write_text(text, encoding="utf-8")
-        phase_hint = "Phase may be complete. Run rail phase --copy." if "- [ ]" not in text else None
-        return True, phase_hint
-    return False, None
+    new_block = "\n".join(lines)
+    text = text.replace(block, new_block, 1)
+    path.write_text(text, encoding="utf-8")
+    return True, phase_hint
 
 
 def cmd_start(argv: list[str]) -> int:
@@ -748,6 +1115,26 @@ def cmd_next(argv: list[str]) -> int:
 
     if project_memory_has_placeholders():
         print("[rail] Project memory has placeholders. Run `rail import` after planning.")
+
+    active_issue = active()
+    if active_issue and not ns.force:
+        issue = active_issue.get("issue", {})
+        number = issue.get("number")
+        print(f"[rail] Issue #{number} is already active. Reusing active issue prompt.")
+        if ns.no_prompt:
+            return 0
+        model = active_model() or ns.model
+        if model == "codex":
+            prompt_args = ["codex"]
+            append_flag(prompt_args, ns.copy, "--copy")
+            return cmd_prompt(prompt_args)
+        if model == "patch":
+            print("\n[rail] Patch model selected.")
+            print("Next: ask ChatGPT for a small .patch file, then run `rail patch PATCH_FILE`.")
+            return 0
+        print("\n[rail] AI-direct model selected.")
+        print("Next: use the external AI/GitHub workflow, then fetch or pull locally.")
+        return 0
 
     start_args = [ns.issue_ref, "--model", ns.model]
     append_flag(start_args, ns.no_branch, "--no-branch")
@@ -840,13 +1227,19 @@ def cmd_verify(argv: list[str]) -> int:
     review_rc = delegate(["review", *review_args])
 
     checks_rc = 0
+    verified_snapshot_commands: list[str] | None = None
     if not ns.no_checks:
         checks_args = ["--timeout", str(ns.timeout), *ns.run_commands]
-        checks_rc = delegate(["checks", *checks_args])
+        checks_rc = delegate(["checks", *checks_args], stream=True)
+        if review_rc == 0 and checks_rc == 0:
+            verified_snapshot_commands = configured_check_commands(ns.run_commands)
 
     prompt_args = ["review"]
     append_flag(prompt_args, ns.copy, "--copy")
     prompt_rc = cmd_prompt(prompt_args)
+    if verified_snapshot_commands is not None and prompt_rc == 0:
+        write_verify_snapshot(verified_snapshot_commands, checks_result())
+        print("[rail] Verified snapshot saved.")
 
     return checks_rc or review_rc or prompt_rc
 
@@ -864,6 +1257,7 @@ def cmd_ship(argv: list[str]) -> int:
     parser.add_argument("--force", action="store_true", help="Pass --force to commit/done where applicable.")
     parser.add_argument("--allow-missing-checks", action="store_true", help="Allow ship when checks are missing/unknown.")
     parser.add_argument("--allow-stale", action="store_true", help="Allow ship when checks are older than changed files.")
+    parser.add_argument("--recheck", action="store_true", help="Rerun checks even when the last verify snapshot is fresh.")
     parser.add_argument("--no-close", action="store_true", help="Do not close the active GitHub issue.")
     parser.add_argument("--no-done", action="store_true", help="Do not clear the active AI Rail state.")
     parser.add_argument("--no-sync", action="store_true", help="Do not switch back to the default branch and pull.")
@@ -873,17 +1267,93 @@ def cmd_ship(argv: list[str]) -> int:
     project_path = rail_dir() / "PROJECT.md"
     project_memory_before_ship: str | None = None
     project_memory_existed_before_ship = project_path.exists()
+    pending_phase_hint: str | None = None
     if project_memory_existed_before_ship and project_path.is_file():
         project_memory_before_ship = project_path.read_text(encoding="utf-8", errors="replace")
 
-    if active_before_ship and not ns.no_close:
+    def run_ship_checks(configured_checks: list[str], reason: str) -> int:
+        if reason == "--recheck requested":
+            print("[rail] --recheck requested. Running checks now...")
+        else:
+            print(f"[rail] Last checks are {reason}. Running checks now...")
+        checks_rc = delegate(["checks"], stream=True)
+        if checks_rc != 0:
+            config = cfg()
+            configured_values = config.get("checks") or []
+            check_output = checks_path().read_text(encoding="utf-8", errors="replace") if checks_path().exists() else ""
+            recovery = missing_npm_check_recovery(configured_values, check_output)
+            if recovery:
+                failed_command, replacement = recovery
+                print(f"[rail] Configured check `{failed_command}` is not available.")
+                print(f"[rail] Found available project check: `{replacement}`.")
+                print("[rail] Running replacement check now...")
+                checks_rc = delegate(["checks", replacement], stream=True)
+                if checks_rc == 0 and can_update_stale_default_node_check(configured_values, failed_command, replacement):
+                    config["checks"] = [replacement]
+                    write_json(rail_dir() / "config.json", config)
+                    print(f"[rail] Updated .rail/config.json checks to `{replacement}`.")
+            elif configured_values:
+                missing_npm_commands = [
+                    command for command in configured_values
+                    if isinstance(command, str)
+                    and (script := npm_run_script(command))
+                    and script not in package_json_scripts()
+                    and check_output_mentions_missing_npm_script(check_output, script)
+                ]
+                if missing_npm_commands and package_json_scripts():
+                    print(f"[rail] Configured check `{missing_npm_commands[0]}` is not available.")
+                    print("[rail] No usable npm check script was found in package.json.")
+
+            if checks_rc != 0:
+                print("[rail] Checks still failed. Ship stopped.")
+                print("[rail] Fix checks and rerun `rail ship`, or use `--force` only if you intentionally accept the risk.")
+                return checks_rc or 1
+        print("[rail] Checks passed. Continuing ship.")
+        write_verify_snapshot(configured_check_commands(), checks_result())
+        refresh_review_and_check_artifacts()
+        return 0
+
+    if not ns.force:
+        check_commands = configured_check_commands()
+        verified, verify_message = validate_verify_snapshot(check_commands=check_commands)
+        if verified:
+            print(verify_message)
+            if ns.recheck:
+                rc = run_ship_checks(check_commands, "--recheck requested")
+                if rc != 0:
+                    return rc
+            else:
+                print("[rail] Checks already passed in last verify. Skipping recheck.")
+        else:
+            reason = check_block_reason()
+            explicit_check_bypass = (
+                (reason in {"missing", "unknown"} and ns.allow_missing_checks)
+                or (reason == "stale" and ns.allow_stale)
+            )
+            if explicit_check_bypass:
+                pass
+            else:
+                can_use_legacy_recovery = (
+                    reason is not None
+                    and (not verified_path().exists() or ns.recheck)
+                )
+                if can_use_legacy_recovery:
+                    rc = run_ship_checks(check_commands, reason)
+                    if rc != 0:
+                        return rc
+                else:
+                    print(verify_message)
+                    return 1
+
+    if active_before_ship:
         issue = active_before_ship.get("issue", {})
         try:
+            print(f"[rail] Updating .rail/PROJECT.md for completed issue #{issue.get('number')}.")
             updated, phase_hint = mark_project_issue_completed(issue.get("number"), issue.get("title"))
             if updated:
                 print("[rail] Updated .rail/PROJECT.md for completed issue; it will be included in the ship commit.")
-            if phase_hint:
-                print(f"[rail] {phase_hint}")
+                refresh_review_and_check_artifacts()
+            pending_phase_hint = phase_hint
         except Exception as exc:
             print(f"[rail] Warning: could not update .rail/PROJECT.md before ship: {exc}")
             print("[rail] Recovery: mark the completed issue in .rail/PROJECT.md manually.")
@@ -895,9 +1365,10 @@ def cmd_ship(argv: list[str]) -> int:
     append_flag(commit_args, ns.allow_missing_checks, "--allow-missing-checks")
     append_flag(commit_args, ns.allow_stale, "--allow-stale")
 
+    print("[rail] Committing...")
     rc = delegate(commit_args)
     if rc != 0:
-        if active_before_ship and not ns.no_close:
+        if active_before_ship:
             try:
                 if project_memory_existed_before_ship:
                     if project_memory_before_ship is not None:
@@ -917,6 +1388,9 @@ def cmd_ship(argv: list[str]) -> int:
             print("[rail] Ship stopped after commit succeeded; issue close failed. Active state was kept.")
             print("[rail] Recovery: manually close the GitHub issue or fix `gh auth login`, then run: rail done && rail sync")
             return rc
+
+    if pending_phase_hint:
+        print(f"[rail] {pending_phase_hint}")
 
     if not ns.no_done:
         done_args: list[str] = []
@@ -982,21 +1456,66 @@ Do not duplicate default placeholder sections.
 If updating an existing roadmap issue, replace the old managed block instead of appending another one.
 If old roadmap content exists outside the managed block, update it only if needed; do not create duplicate roadmap sections.
 
-Inside that block, include:
+Inside the managed block, include exactly one strict Rail-readable roadmap block:
+
+{RAIL_ROADMAP_START}
+
+## Phase P1 - Foundation / truth alignment
+Status: active
+
+### Goal
+Plain text phase goal.
+
+### Completion criteria
+- Plain text criterion.
+
+### Tasks
+- [ ] #123 | P1-T01 | Existing active issue title
+- [ ] TBD | P1-T02 | Future task title
+
+{RAIL_ROADMAP_END}
+
+Strict roadmap rules:
+- Every task line must use exactly one of these forms:
+  `- [ ] ISSUE | TASK_ID | TITLE`
+  `- [x] ISSUE | TASK_ID | TITLE`
+- `ISSUE` must be `#N` for GitHub issues that exist or `TBD` for future tasks not yet created.
+- `TASK_ID` must look like `P1-T01`, `P2-T03`, and be unique.
+- Phase `Status:` must be one of `planned`, `active`, `complete`, or `blocked`.
+- Use checkboxes for every task.
+- Do not use numbered lists for task status inside the strict block.
+- Do not duplicate task status elsewhere as a second source of truth.
+- Do not append duplicate roadmap blocks; replace/update the existing block.
+
+AI RAIL PROJECT MEMORY contains human-readable project context:
 - product summary
 - stack
 - non-negotiables
 - current state
 - target state
+- blockers/postponed items
+- completed work summary
+- next recommended issue/task
+- workflow notes
+
+AI RAIL ROADMAP contains only Rail-readable phase/task state:
+- phase headings
+- Status
+- Goal
+- Completion criteria
+- Tasks
+- strict task lines
+
+Do not put product summary, stack, non-negotiables, current state, target state, blockers, completed-work prose, workflow notes, or next-step prose inside AI RAIL ROADMAP.
+Do not duplicate task status outside AI RAIL ROADMAP.
+
+Inside the strict roadmap block, include:
 - full phased roadmap
 - phase goals
 - completion criteria
 - future tasks/backlog
 - current phase
 - active execution queue
-- completed work if known
-- blockers/postponed items
-- next recommended issue/task
 
 AI Rail treats `.rail/PROJECT.md` as the local project memory and roadmap brain, but you should update the GitHub roadmap issue first. Do not edit `.rail/PROJECT.md` remotely unless the user explicitly asks.
 
@@ -1011,6 +1530,8 @@ Do not force those exact phase names; choose phases that fit this repo.
 Create only the first active execution slice as implementation-ready GitHub Issues:
 - usually 3-10 right-sized implementation issues
 - do not create GitHub issues for the entire long-term roadmap
+- assign `#N` issue refs in the strict roadmap block for issues you create
+- keep future tasks as `TBD | Pn-Txx | title`
 - small enough for one focused coding-agent pass
 - big enough to be meaningful
 - not tiny/noisy micro-tasks
@@ -1040,8 +1561,10 @@ Each implementation issue must include this body template:
 - Touch only necessary files.
 - Do not commit.
 - Do not close the issue.
-- Do not run broad/full test suites unless explicitly asked.
-- Run only focused checks related to this issue.
+- Do not run tests/checks by default.
+- Do not run full suites like npm test, npm run build, or broad integration tests.
+- Only run a tiny focused check if there is truly no safe way to finish the task without it.
+- If you skip checks, say exactly: "Checks not run; human will run rail v."
 - Stop and explain if this requires broader architecture changes.
 
 Task-writing rules:
@@ -1098,6 +1621,19 @@ Update the GitHub roadmap issue. Update the managed project-memory block inside 
 Replace/update the existing managed block. Do not append duplicate managed blocks.
 Do not leave stale phase/task sections.
 Do not include `CHANGE_ME`.
+Inside it, preserve and update exactly one strict `{RAIL_ROADMAP_START}` / `{RAIL_ROADMAP_END}` block.
+Every task line in that block must stay exactly one of these forms:
+`- [ ] ISSUE | TASK_ID | TITLE`
+`- [x] ISSUE | TASK_ID | TITLE`
+Use `#N` for existing GitHub issues and `TBD` for future tasks not yet created.
+Use phase statuses only from: planned, active, complete, blocked.
+Do not use numbered lists for task status.
+Do not invent alternate task structures.
+
+AI RAIL PROJECT MEMORY contains human-readable project context: product summary, stack, non-negotiables, current state, target state, blockers/postponed items, completed work summary, next recommended issue/task, and workflow notes.
+AI RAIL ROADMAP contains only Rail-readable phase/task state: phase headings, Status, Goal, Completion criteria, Tasks, and strict task lines.
+Do not put product summary, stack, non-negotiables, current state, target state, blockers, completed-work prose, workflow notes, or next-step prose inside AI RAIL ROADMAP.
+Do not duplicate task status outside AI RAIL ROADMAP.
 
 AI Rail will import that roadmap issue into local `.rail/PROJECT.md`; do not edit `.rail/PROJECT.md` remotely unless explicitly asked.
 
@@ -1122,7 +1658,8 @@ Audit whether the phase is really complete. Check for:
 - roadmap mismatch
 
 If the phase is complete:
-- mark completed tasks/phases in the roadmap issue memory block
+- mark completed task lines as `[x]` in the strict roadmap block
+- update phase `Status:` lines in the strict roadmap block
 - update completed work, current phase, next recommended issue, and blockers/postponed work in the roadmap issue memory block
 - mark or recommend the phase as complete in the GitHub roadmap issue
 - recommend or create only the next active execution slice for the next phase
@@ -1131,6 +1668,8 @@ If the phase is complete:
 If the phase is not complete:
 - list remaining blockers
 - create or update only scoped blocker issues
+- replace `TBD` with issue numbers when you create the next active execution slice
+- add future tasks only as `- [ ] TBD | Pn-Txx | title`
 - do not start the next phase yet
 
 Review upcoming phases and decide whether the roadmap is still correct. If it is off-track, update upcoming phases in the GitHub roadmap issue, then clearly tell the user what changed and why.
@@ -1244,6 +1783,33 @@ def cmd_done(argv: list[str]) -> int:
         history_append(entry)
         print(f"[rail] history appended for issue #{entry.get('issue')}")
     return rc
+
+
+def cmd_clear_active(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="rail clear-active")
+    parser.add_argument("--force", action="store_true", help="Clear local active state even with dirty worktree.")
+    ns = parser.parse_args(argv)
+
+    if not active():
+        print("[rail] No active issue to clear.")
+        return 0
+
+    files = changed_files()
+    if files and not ns.force:
+        print(f"Warning: {len(files)} uncommitted file(s) still exist.")
+        print("Did you forget to commit?")
+        print("")
+        for path in files:
+            print(f"  {path}")
+        print("")
+        print("Run `rail clear-active --force` to clear local active state anyway.")
+        return 1
+
+    active_path().unlink(missing_ok=True)
+    print("[rail] Cleared local active issue state.")
+    print("[rail] GitHub issue was not closed.")
+    print("[rail] Branch was not changed.")
+    return 0
 
 
 def cmd_log(argv: list[str]) -> int:
@@ -2072,6 +2638,24 @@ def cmd_doctor(argv: list[str]) -> int:
                     print("[rail] No open implementation issues found. Run `rail phase --copy` to create the next execution slice.")
             except Exception:
                 pass
+    project_path = rail_dir() / "PROJECT.md"
+    if project_path.exists():
+        roadmap_warnings = validate_rail_roadmap(project_path.read_text(encoding="utf-8", errors="replace"))
+        if roadmap_warnings:
+            print("\n[rail] PROJECT.md roadmap warnings:")
+            for item in roadmap_warnings:
+                print(f"- {item}")
+    config = cfg()
+    checks = config.get("checks") or []
+    scripts = package_json_scripts()
+    if checks == ["npm run check"] and scripts and "check" not in scripts:
+        replacement = suggested_node_check_replacement()
+        print("\n[rail] Check configuration warning:")
+        print("Configured check `npm run check` does not exist in package.json.")
+        if replacement and replacement != "npm run check":
+            print(f"Suggested replacement: `{replacement}`.")
+            print(f"Run now with: rail checks --run \"{replacement}\"")
+            print(f"Update .rail/config.json checks to: [\"{replacement}\"]")
     return rc
 
 
@@ -2081,7 +2665,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"AI Rail {VERSION}")
         print("Daily: init, resume, plan, import, phase, next, handoff, verify, ship, snapshot, export")
         print("Aliases: r, n, p, ph, im, v, s, snap, h, hc, hg, hl, x, xd, xf, rc")
-        print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, sync, log, report, ci-init, upgrade, about, demo, release-check")
+        print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, clear-active, sync, log, report, ci-init, upgrade, about, demo, release-check")
         return 0
     if argv[0] in {"--version", "version"}:
         print(render_version(), end="")
@@ -2129,12 +2713,16 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_patch(rest)
     if cmd == "done":
         return cmd_done(rest)
+    if cmd == "clear-active":
+        return cmd_clear_active(rest)
     if cmd == "log":
         return cmd_log(rest)
     if cmd == "report":
         return cmd_report(rest)
     if cmd == "ci-init":
         return cmd_ci_init(rest)
+    if cmd == "checks":
+        return delegate([cmd, *rest], stream=True)
 
     # All unchanged advanced commands delegate to the local core.
     return delegate([cmd, *rest])

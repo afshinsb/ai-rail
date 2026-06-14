@@ -19,6 +19,8 @@ Issue -> Start -> Prompt -> Edit/Patch/AI-direct -> Review -> Checks -> Audit ->
 - Coding happens one issue at a time through `rail next --copy`.
 - `rail ship` closes one issue and marks matching checklist tasks complete locally.
 
+Roadmap task state lives in exactly one strict `AI RAIL ROADMAP START/END` block inside `.rail/PROJECT.md`. Rail only edits task status inside that block. Future tasks use `TBD | Pn-Txx | title`; the phase AI creates the next issue slice and replaces `TBD` with issue numbers when those GitHub issues exist.
+
 Coding agents should not silently update the roadmap or create extra tasks unless the planning or phase prompt asks for that.
 
 ## Daily loop
@@ -31,6 +33,8 @@ rail verify --copy
 # paste the generated review prompt into an AI reviewer for audit
 rail ship "type(scope): message"
 ```
+
+`rail verify` runs checks and saves a verified snapshot. `rail ship` ships only if the working tree still matches that snapshot, and normally does not rerun checks. Use `rail ship --recheck "type(scope): message"` to force a check rerun during ship.
 
 ## Model 1 - normal workflow
 
@@ -66,6 +70,7 @@ rail start next
 rail prompt codex --copy
 rail review
 rail checks
+rail checks --run "npm run typecheck"
 rail prompt review --copy
 rail commit "type(scope): message"
 rail issue-close --commit

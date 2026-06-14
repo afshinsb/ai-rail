@@ -36,6 +36,13 @@ def init_static_repo_with_commit(path: Path) -> None:
     subprocess.run(["git", "commit", "-m", "init"], cwd=path, capture_output=True, text=True, check=True)
 
 
+def write_active_issue(path: Path, number: int = 1, title: str = "Test issue") -> None:
+    state = path / ".rail" / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    active = {"issue": {"number": number, "title": title, "body": "", "url": ""}, "interaction_model": "codex"}
+    (state / "active.json").write_text(json.dumps(active), encoding="utf-8")
+
+
 def ship_without_remote(path: Path, message: str, *extra_args: str) -> subprocess.CompletedProcess[str]:
     return run_cli(path, "ship", message, "--no-push", "--no-close", "--no-done", "--no-sync", *extra_args)
 
@@ -52,6 +59,9 @@ def install_fake_gh(path: Path, monkeypatch, *, open_issues: list[dict], closed_
         "if args[:2] == ['issue', 'list']:\n"
         "    state = args[args.index('--state') + 1] if '--state' in args else 'open'\n"
         "    print(open_issues if state == 'open' else closed_issues)\n"
+        "    raise SystemExit(0)\n"
+        "if args[:2] == ['issue', 'close']:\n"
+        "    print('Closed issue #' + args[2])\n"
         "    raise SystemExit(0)\n"
         "print('unsupported gh call: ' + ' '.join(args), file=sys.stderr)\n"
         "raise SystemExit(1)\n",
@@ -70,7 +80,46 @@ def install_fake_gh(path: Path, monkeypatch, *, open_issues: list[dict], closed_
     monkeypatch.setitem(ENV, "PATH", str(fake_dir) + os.pathsep + ENV.get("PATH", existing_path))
 
 
-def test_init_creates_node_config_with_check(tmp_path: Path) -> None:
+def install_fake_npm(path: Path, monkeypatch) -> None:
+    fake_dir = path / "fake-bin"
+    fake_dir.mkdir(exist_ok=True)
+    script = fake_dir / "fake_npm.py"
+    script.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "if len(args) < 2 or args[0] not in {'run', 'run-script'}:\n"
+        "    print('unsupported npm call: ' + ' '.join(args), file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
+        "name = args[1]\n"
+        "package = json.loads(Path('package.json').read_text(encoding='utf-8'))\n"
+        "scripts = package.get('scripts') or {}\n"
+        "if name not in scripts:\n"
+        "    print(f'npm error Missing script: \"{name}\"', file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
+        "Path('.rail/npm-runs.txt').open('a', encoding='utf-8').write(name + '\\n')\n"
+        "body = scripts[name]\n"
+        "if body == 'fail':\n"
+        "    print(f'{name} failed', file=sys.stderr)\n"
+        "    raise SystemExit(7)\n"
+        "print(f'{name} passed')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    shim = f"@echo off\r\n{sys.executable} \"{script}\" %*\r\n"
+    (fake_dir / "npm.cmd").write_text(shim, encoding="utf-8")
+    (fake_dir / "npm.bat").write_text(shim, encoding="utf-8")
+    posix = fake_dir / "npm"
+    posix.write_text(f"#!/usr/bin/env sh\nexec \"{sys.executable}\" \"{script}\" \"$@\"\n", encoding="utf-8")
+    posix.chmod(0o755)
+    path_keys = [key for key in ENV if key.lower() == "path"] or ["PATH"]
+    existing_path = ENV.get(path_keys[0], "")
+    for key in path_keys:
+        monkeypatch.setitem(ENV, key, str(fake_dir) + os.pathsep + ENV.get(key, existing_path))
+    monkeypatch.setitem(ENV, "PATH", str(fake_dir) + os.pathsep + ENV.get("PATH", existing_path))
+
+
+def test_init_creates_node_config_with_fallback_check(tmp_path: Path) -> None:
     git_init(tmp_path)
     result = run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Demo")
     assert result.returncode == 0, result.stderr + result.stdout
@@ -79,6 +128,31 @@ def test_init_creates_node_config_with_check(tmp_path: Path) -> None:
     assert cfg["checks"] == ["npm run check"]
     assert (tmp_path / ".rail" / "CHATGPT.md").exists()
     assert (tmp_path / ".rail" / "AIDER.md").exists()
+
+
+def test_init_node_chooses_typecheck_when_check_script_missing(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"typecheck": "tsc --noEmit"}}), encoding="utf-8")
+
+    result = run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Demo")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    cfg = json.loads((tmp_path / ".rail" / "config.json").read_text(encoding="utf-8"))
+    assert cfg["checks"] == ["npm run typecheck"]
+
+
+def test_init_node_prefers_check_script(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"check": "eslint .", "typecheck": "tsc --noEmit"}}),
+        encoding="utf-8",
+    )
+
+    result = run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Demo")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    cfg = json.loads((tmp_path / ".rail" / "config.json").read_text(encoding="utf-8"))
+    assert cfg["checks"] == ["npm run check"]
 
 
 def test_init_rerun_updates_placeholder_project_name(tmp_path: Path) -> None:
@@ -106,6 +180,63 @@ def test_init_rerun_updates_placeholder_project_name(tmp_path: Path) -> None:
     assert "project_name is still CHANGE_ME" not in doctor.stdout
 
 
+def test_doctor_warns_when_configured_node_check_script_is_missing(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"typecheck": "tsc --noEmit"}}), encoding="utf-8")
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = ["npm run check"]
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+
+    doctor = run_cli(tmp_path, "doctor")
+
+    assert doctor.returncode == 0, doctor.stderr + doctor.stdout
+    assert "Configured check `npm run check` does not exist in package.json." in doctor.stdout
+    assert "Suggested replacement: `npm run typecheck`." in doctor.stdout
+    assert 'rail checks --run "npm run typecheck"' in doctor.stdout
+
+
+def test_doctor_warns_when_strict_roadmap_block_is_missing(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+    (tmp_path / ".rail" / "PROJECT.md").write_text("# Notes\n\nLoose roadmap only.\n", encoding="utf-8")
+
+    doctor = run_cli(tmp_path, "doctor")
+
+    assert "PROJECT.md roadmap is not Rail-readable. Run rail phase --copy, then rail import." in doctor.stdout
+
+
+def test_doctor_warns_on_malformed_roadmap_task_line(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+
+    doctor = run_cli(tmp_path, "doctor")
+
+    assert "malformed task line" in doctor.stdout
+
+
+def test_doctor_warns_on_duplicate_roadmap_task_ids(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | One\n- [ ] #3 | P1-T01 | Two\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+
+    doctor = run_cli(tmp_path, "doctor")
+
+    assert "duplicate task ID `P1-T01`" in doctor.stdout
+
+
+def test_doctor_warns_on_duplicate_roadmap_issue_refs(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | One\n- [ ] #2 | P1-T02 | Two\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+
+    doctor = run_cli(tmp_path, "doctor")
+
+    assert "duplicate issue ref `#2`" in doctor.stdout
+
+
 def test_init_rerun_preserves_existing_project_name(tmp_path: Path) -> None:
     git_init(tmp_path)
     assert run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Keep Me").returncode == 0
@@ -116,6 +247,23 @@ def test_init_rerun_preserves_existing_project_name(tmp_path: Path) -> None:
     cfg = json.loads((tmp_path / ".rail" / "config.json").read_text(encoding="utf-8"))
     assert cfg["project_name"] == "Keep Me"
     assert "project_name" not in result.stdout
+
+
+def test_init_rerun_preserves_user_customized_node_checks(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"check": "eslint .", "typecheck": "tsc --noEmit"}}), encoding="utf-8")
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = ["npm run typecheck"]
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "init", "--stack", "node")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert cfg["checks"] == ["npm run typecheck"]
+    assert "Updated placeholder config values: checks" not in result.stdout
 
 
 def test_init_force_preserves_existing_config(tmp_path: Path) -> None:
@@ -262,12 +410,9 @@ def test_project_template_defines_local_project_memory() -> None:
     assert "# Project Memory" in text
     assert "local AI Rail project memory and roadmap brain" in text
     assert "AI RAIL MANAGED ROADMAP START" in text
-    assert "## Current state" in text
-    assert "## Target state" in text
-    assert "## Phases" in text
-    assert "## Active execution queue" in text
-    assert "## Next recommended issue" in text
-    assert "## Completed work" in text
+    assert "AI RAIL ROADMAP START" in text
+    assert "- [ ] TBD | P1-T01 |" in text
+    assert "Status: active" in text
     assert "## Roadmap maintenance rules" in text
     assert "Do not create `.rail/ROADMAP.md`" in text
 
@@ -386,6 +531,9 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert "current state" in result.stdout
     assert "target state" in result.stdout
     assert "full phased roadmap" in result.stdout
+    assert "AI RAIL ROADMAP START" in result.stdout
+    assert "`- [ ] ISSUE | TASK_ID | TITLE`" in result.stdout
+    assert "TBD | Pn-Txx | title" in result.stdout
     assert "next recommended issue/task" in result.stdout
     assert "phased" in result.stdout.lower()
     assert "Roadmap: Road Demo functional MVP" in result.stdout
@@ -430,7 +578,7 @@ def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) ->
     assert "Do not append duplicate managed blocks" in result.stdout
     assert "Do not include `CHANGE_ME`" in result.stdout
     assert "update completed work, current phase, next recommended issue" in result.stdout
-    assert "mark completed tasks/phases in the roadmap issue memory block" in result.stdout
+    assert "mark completed task lines as `[x]` in the strict roadmap block" in result.stdout
     assert "Review upcoming phases" in result.stdout
     assert "off-track" in result.stdout
     assert "tell the user what changed and why" in result.stdout
@@ -441,6 +589,9 @@ def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) ->
     assert "next phase recommendation" in result.stdout
     assert "one focused coding session" in result.stdout
     assert "rail n -> coding agent -> rail v -> reviewer -> rail s" in result.stdout
+    assert "AI RAIL ROADMAP START" in result.stdout
+    assert "`- [ ] ISSUE | TASK_ID | TITLE`" in result.stdout
+    assert "TBD | Pn-Txx | title" in result.stdout
 
 
 def test_phase_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
@@ -507,11 +658,43 @@ def test_import_extracts_managed_memory_and_writes_project(tmp_path: Path, monke
     assert result.returncode == 0, result.stderr + result.stdout
     text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
     assert "AI RAIL MANAGED ROADMAP START" in text
+    assert "AI RAIL ROADMAP START" in text
     assert "## Roadmap" in text
     assert "- [ ] #2 Build thing" in text
     assert not (tmp_path / ".rail" / "ROADMAP.md").exists()
     assert "Open issues: 1" in result.stdout
     assert "Closed issues: 1" in result.stdout
+
+
+def test_import_preserves_strict_roadmap_block(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    strict = "<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Goal\nShip safely.\n\n### Completion criteria\n- Done.\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->"
+    body = f"<!-- AI RAIL PROJECT MEMORY START -->\n## Notes\n\n{strict}\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert text.count("<!-- AI RAIL ROADMAP START -->") == 1
+    assert strict in text
+
+
+def test_import_does_not_duplicate_strict_roadmap_blocks(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    strict = "<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Goal\nShip safely.\n\n### Completion criteria\n- Done.\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->"
+    body = f"<!-- AI RAIL PROJECT MEMORY START -->\n{strict}\n\n{strict}\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert text.count("<!-- AI RAIL ROADMAP START -->") == 1
 
 
 def test_import_replaces_default_project_placeholders(tmp_path: Path, monkeypatch) -> None:
@@ -608,6 +791,80 @@ def test_next_warns_when_no_open_implementation_issue(tmp_path: Path, monkeypatc
     assert "Run `rail phase --copy`" in result.stdout
 
 
+def test_next_with_active_issue_reuses_prompt_without_starting_next(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    run_cli(tmp_path, "init", "--stack", "static")
+    state = tmp_path / ".rail" / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "active.json").write_text(
+        json.dumps({"issue": {"number": 5, "title": "Keep going", "body": "Do work.", "url": ""}, "interaction_model": "codex"}),
+        encoding="utf-8",
+    )
+    rail = tmp_path / ".rail" / "rail.py"
+    rail.write_text(
+        "import sys\n"
+        "if sys.argv[1] == 'start':\n"
+        "    print('start should not run')\n"
+        "    raise SystemExit(9)\n"
+        "if sys.argv[1:3] == ['prompt', 'codex']:\n"
+        "    print('prompt reused')\n"
+        "    raise SystemExit(0)\n"
+        "print('unexpected ' + ' '.join(sys.argv[1:]))\n"
+        "raise SystemExit(8)\n",
+        encoding="utf-8",
+    )
+
+    result = run_cli(tmp_path, "next", "--copy")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] Issue #5 is already active. Reusing active issue prompt." in result.stdout
+    assert "prompt reused" in result.stdout
+    assert "start should not run" not in result.stdout
+    assert "No open implementation issues found." not in result.stdout
+
+
+def test_clear_active_clears_only_local_active_state(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    write_active_issue(tmp_path, number=5, title="Reset local prompt")
+
+    result = run_cli(tmp_path, "clear-active")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] Cleared local active issue state." in result.stdout
+    assert "[rail] GitHub issue was not closed." in result.stdout
+    assert "[rail] Branch was not changed." in result.stdout
+    assert not (tmp_path / ".rail" / "state" / "active.json").exists()
+    assert not (tmp_path / ".rail" / "state" / "history.jsonl").exists()
+
+
+def test_clear_active_no_active_issue_is_noop(tmp_path: Path) -> None:
+    result = run_cli(tmp_path, "clear-active")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] No active issue to clear." in result.stdout
+
+
+def test_clear_active_refuses_dirty_worktree_unless_forced(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    write_active_issue(tmp_path, number=5, title="Reset local prompt")
+    changed = tmp_path / "changed.txt"
+    changed.write_text("work in progress\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "clear-active")
+
+    assert result.returncode == 1
+    assert "Warning: 1 uncommitted file(s) still exist." in result.stdout
+    assert "changed.txt" in result.stdout
+    assert "rail clear-active --force" in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
+
+    forced = run_cli(tmp_path, "clear-active", "--force")
+
+    assert forced.returncode == 0, forced.stderr + forced.stdout
+    assert "[rail] Cleared local active issue state." in forced.stdout
+    assert not (tmp_path / ".rail" / "state" / "active.json").exists()
+
+
 def test_ship_marks_project_task_complete(tmp_path: Path) -> None:
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
@@ -615,14 +872,34 @@ def test_ship_marks_project_task_complete(tmp_path: Path) -> None:
     state = tmp_path / ".rail" / "state"
     state.mkdir()
     (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
-    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL MANAGED ROADMAP START -->\n## Completed work\n\n## Active execution queue\n\n- [ ] #2 Build thing\n<!-- AI RAIL MANAGED ROADMAP END -->\n", encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync")
 
     assert result.returncode == 0, result.stderr + result.stdout
     text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
-    assert "- [x] #2 Build thing" in text
+    assert "- [x] #2 | P1-T01 | Build thing" in text
+    assert "Status: complete" in text
     assert "Updated .rail/PROJECT.md for completed issue" in result.stdout
+
+
+def test_ship_ignores_loose_project_roadmap_prose(tmp_path: Path) -> None:
+    rail = tmp_path / ".rail" / "rail.py"
+    rail.parent.mkdir(parents=True)
+    rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
+    state = tmp_path / ".rail" / "state"
+    state.mkdir()
+    (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
+    project = tmp_path / ".rail" / "PROJECT.md"
+    project.write_text("## Loose roadmap\n\n1. #2 - Build thing\n- [ ] #2 Build thing\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = project.read_text(encoding="utf-8")
+    assert "- [x] #2" not in text
+    assert "No matching Rail-readable roadmap task found for issue #2." in result.stdout
+    assert "Updated .rail/PROJECT.md for completed issue" not in result.stdout
 
 
 def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path) -> None:
@@ -633,7 +910,7 @@ def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path)
         "import sys\n"
         "cmd = sys.argv[1]\n"
         "Path('.rail/calls.txt').open('a', encoding='utf-8').write(cmd + '\\n')\n"
-        "if cmd == 'commit' and '- [x] #2 Build thing' not in Path('.rail/PROJECT.md').read_text(encoding='utf-8'):\n"
+        "if cmd == 'commit' and '- [x] #2 | P1-T01 | Build thing' not in Path('.rail/PROJECT.md').read_text(encoding='utf-8'):\n"
         "    print('project not marked before commit')\n"
         "    raise SystemExit(2)\n"
         "print('fake ' + cmd)\n"
@@ -643,15 +920,15 @@ def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path)
     state = tmp_path / ".rail" / "state"
     state.mkdir()
     (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
-    (tmp_path / ".rail" / "PROJECT.md").write_text("## Completed work\n\n## Active execution queue\n\n- [ ] #2 Build thing\n", encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push")
 
     assert result.returncode == 0, result.stderr + result.stdout
     calls = (tmp_path / ".rail" / "calls.txt").read_text(encoding="utf-8").splitlines()
-    assert calls == ["commit", "issue-close", "done", "sync"]
+    assert calls == ["checks", "commit", "issue-close", "done", "sync"]
     assert calls.count("commit") == 1
-    assert "- [x] #2 Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "- [x] #2 | P1-T01 | Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
 
 
 def test_ship_restores_project_memory_when_commit_fails(tmp_path: Path) -> None:
@@ -955,18 +1232,172 @@ def test_commit_stages_untracked_file_with_spaces_when_allowed(tmp_path: Path) -
     assert "safe notes.txt" in show.stdout
 
 
-def test_ship_blocks_when_checks_are_missing(tmp_path: Path) -> None:
+def test_checks_run_flag_writes_passing_last_checks(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    command = f'"{sys.executable}" -c "print(123)"'
+
+    result = run_cli(tmp_path, "checks", "--run", command)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    checks = (tmp_path / ".rail" / "state" / "last-checks.md").read_text(encoding="utf-8")
+    assert f"## `{command}`" in checks
+    assert "Exit code: 0" in checks
+
+
+def test_checks_run_flag_allows_multiple_commands(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    first = f'"{sys.executable}" -c "print(1)"'
+    second = f'"{sys.executable}" -c "print(2)"'
+
+    result = run_cli(tmp_path, "checks", "--run", first, "--run", second)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    checks = (tmp_path / ".rail" / "state" / "last-checks.md").read_text(encoding="utf-8")
+    assert f"## `{first}`" in checks
+    assert f"## `{second}`" in checks
+
+
+def test_checks_run_flag_runs_npm_typecheck(tmp_path: Path, monkeypatch) -> None:
+    init_static_repo_with_commit(tmp_path)
+    install_fake_npm(tmp_path, monkeypatch)
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"typecheck": "pass"}}), encoding="utf-8")
+
+    result = run_cli(tmp_path, "checks", "--run", "npm run typecheck")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (tmp_path / ".rail" / "npm-runs.txt").read_text(encoding="utf-8").splitlines() == ["typecheck"]
+    checks = (tmp_path / ".rail" / "state" / "last-checks.md").read_text(encoding="utf-8")
+    assert "## `npm run typecheck`" in checks
+    assert "Exit code: 0" in checks
+
+
+def test_verify_writes_verified_snapshot(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    write_active_issue(tmp_path)
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "verify")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    snapshot = json.loads((tmp_path / ".rail" / "state" / "last-verify.json").read_text(encoding="utf-8"))
+    assert snapshot["check_result"] == "passed"
+    assert snapshot["branch"]
+    assert "app.txt" in snapshot["changed_files"]
+    assert snapshot["fingerprint"]
+    assert "[rail] Verified snapshot saved." in result.stdout
+
+
+def test_ship_after_fresh_verify_does_not_rerun_checks(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    write_active_issue(tmp_path)
+    command = f'"{sys.executable}" -c "from pathlib import Path; Path(r\'{tmp_path / "check-count.txt"}\').open(\'a\', encoding=\'utf-8\').write(\'x\\n\')"'
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = [command]
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "verify").returncode == 0
+
+    result = ship_without_remote(tmp_path, "test: verified ship")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] Verified snapshot is fresh." in result.stdout
+    assert "[rail] Checks already passed in last verify. Skipping recheck." in result.stdout
+    assert "Running check 1/1" not in result.stdout
+    assert (tmp_path / "check-count.txt").read_text(encoding="utf-8").splitlines() == ["x"]
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: verified ship" in log.stdout
+
+
+def test_ship_blocks_if_tracked_file_changes_after_verify(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    write_active_issue(tmp_path)
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "verify").returncode == 0
+    (tmp_path / "app.txt").write_text("changed after verify\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: stale verified ship")
+
+    assert result.returncode == 1
+    assert "Error: files changed after last review. Run: rail v" in result.stdout
+
+
+def test_ship_blocks_if_reviewed_untracked_file_changes_after_verify(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    write_active_issue(tmp_path)
+    (tmp_path / "notes.txt").write_text("reviewed\n", encoding="utf-8")
+    assert run_cli(tmp_path, "verify").returncode == 0
+    (tmp_path / "notes.txt").write_text("changed after verify\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: stale untracked")
+
+    assert result.returncode == 1
+    assert "Error: files changed after last review. Run: rail v" in result.stdout
+
+
+def test_ship_includes_own_project_completion_update_after_verify(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    state = tmp_path / ".rail" / "state"
+    active = {"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}
+    (state / "active.json").write_text(json.dumps(active), encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "verify").returncode == 0
+
+    result = run_cli(tmp_path, "ship", "test: project complete", "--no-push", "--no-close", "--no-done", "--no-sync")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] Updating .rail/PROJECT.md for completed issue #2." in result.stdout
+    assert "- [x] #2 | P1-T01 | Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    show = subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert ".rail/PROJECT.md" in show.stdout
+
+
+def test_ship_recheck_reruns_checks_with_fresh_verify(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    write_active_issue(tmp_path)
+    command = f'"{sys.executable}" -c "from pathlib import Path; Path(r\'{tmp_path / "check-count.txt"}\').open(\'a\', encoding=\'utf-8\').write(\'x\\n\')"'
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = [command]
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "verify").returncode == 0
+
+    result = ship_without_remote(tmp_path, "test: verified recheck", "--recheck")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Running check 1/1" in result.stdout
+    assert (tmp_path / "check-count.txt").read_text(encoding="utf-8").splitlines() == ["x", "x"]
+
+
+def test_ship_blocks_without_passing_verify_snapshot_when_checks_are_legacy_passed(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "review").returncode == 0
+    assert run_cli(tmp_path, "checks").returncode == 0
+
+    result = ship_without_remote(tmp_path, "test: no verify snapshot")
+
+    assert result.returncode == 1
+    assert "Error: no passing verify snapshot found. Run: rail v" in result.stdout
+
+
+def test_ship_auto_runs_checks_when_checks_are_missing(tmp_path: Path) -> None:
     init_static_repo_with_commit(tmp_path)
     (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
     assert run_cli(tmp_path, "review").returncode == 0
 
     result = ship_without_remote(tmp_path, "test: missing checks")
 
-    assert result.returncode == 1
-    assert "Error: last checks are MISSING. Refusing to commit." in result.stdout
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] Last checks are missing. Running checks now..." in result.stdout
+    assert "[rail] Checks passed. Continuing ship." in result.stdout
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: missing checks" in log.stdout
 
 
-def test_ship_blocks_when_checks_are_stale(tmp_path: Path) -> None:
+def test_ship_auto_runs_checks_when_checks_are_stale(tmp_path: Path) -> None:
     init_static_repo_with_commit(tmp_path)
     (tmp_path / "app.txt").write_text("before\n", encoding="utf-8")
     assert run_cli(tmp_path, "checks").returncode == 0
@@ -977,8 +1408,176 @@ def test_ship_blocks_when_checks_are_stale(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: stale checks")
 
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] Last checks are stale. Running checks now..." in result.stdout
+    assert "[rail] Checks passed. Continuing ship." in result.stdout
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: stale checks" in log.stdout
+
+
+def test_ship_auto_runs_checks_when_last_checks_failed(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = [f'"{sys.executable}" -c "print(123)"']
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "review").returncode == 0
+    checks_file = tmp_path / ".rail" / "state" / "last-checks.md"
+    checks_file.write_text("Exit code: 1\nold failure\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: rerun failed checks")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] Last checks are failed. Running checks now..." in result.stdout
+    assert "[rail] Checks passed. Continuing ship." in result.stdout
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: rerun failed checks" in log.stdout
+
+
+def test_ship_recovers_from_missing_npm_check_script(tmp_path: Path, monkeypatch) -> None:
+    init_static_repo_with_commit(tmp_path)
+    install_fake_npm(tmp_path, monkeypatch)
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"typecheck": "pass"}}), encoding="utf-8")
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = ["npm run check"]
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "review").returncode == 0
+    checks_file = tmp_path / ".rail" / "state" / "last-checks.md"
+    checks_file.write_text("Exit code: 1\nold failure\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: recover npm check")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "[rail] Configured check `npm run check` is not available." in result.stdout
+    assert "[rail] Found available project check: `npm run typecheck`." in result.stdout
+    assert "[rail] Running replacement check now..." in result.stdout
+    assert (tmp_path / ".rail" / "npm-runs.txt").read_text(encoding="utf-8").splitlines() == ["typecheck"]
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert cfg["checks"] == ["npm run typecheck"]
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: recover npm check" in log.stdout
+
+
+def test_ship_stops_when_replacement_npm_check_fails(tmp_path: Path, monkeypatch) -> None:
+    init_static_repo_with_commit(tmp_path)
+    install_fake_npm(tmp_path, monkeypatch)
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"typecheck": "fail"}}), encoding="utf-8")
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = ["npm run check"]
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "review").returncode == 0
+    checks_file = tmp_path / ".rail" / "state" / "last-checks.md"
+    checks_file.write_text("Exit code: 1\nold failure\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: replacement fails")
+
+    assert result.returncode == 7, result.stderr + result.stdout
+    assert "[rail] Configured check `npm run check` is not available." in result.stdout
+    assert "[rail] Found available project check: `npm run typecheck`." in result.stdout
+    assert "[rail] Checks still failed. Ship stopped." in result.stdout
+    assert (tmp_path / ".rail" / "npm-runs.txt").read_text(encoding="utf-8").splitlines() == ["typecheck"]
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert cfg["checks"] == ["npm run check"]
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: replacement fails" not in log.stdout
+
+
+def test_ship_stops_when_missing_npm_check_has_no_replacement(tmp_path: Path, monkeypatch) -> None:
+    init_static_repo_with_commit(tmp_path)
+    install_fake_npm(tmp_path, monkeypatch)
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"format": "pass"}}), encoding="utf-8")
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = ["npm run check"]
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "review").returncode == 0
+    checks_file = tmp_path / ".rail" / "state" / "last-checks.md"
+    checks_file.write_text("Exit code: 1\nold failure\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: no npm replacement")
+
+    assert result.returncode == 1, result.stderr + result.stdout
+    assert "[rail] Configured check `npm run check` is not available." in result.stdout
+    assert "[rail] No usable npm check script was found in package.json." in result.stdout
+    assert "[rail] Checks still failed. Ship stopped." in result.stdout
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: no npm replacement" not in log.stdout
+
+
+def test_ship_still_blocks_when_configured_npm_check_really_fails(tmp_path: Path, monkeypatch) -> None:
+    init_static_repo_with_commit(tmp_path)
+    install_fake_npm(tmp_path, monkeypatch)
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"check": "fail", "typecheck": "pass"}}), encoding="utf-8")
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = ["npm run check"]
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "review").returncode == 0
+    checks_file = tmp_path / ".rail" / "state" / "last-checks.md"
+    checks_file.write_text("Exit code: 1\nold failure\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: real check fails")
+
+    assert result.returncode == 7, result.stderr + result.stdout
+    assert "Found available project check" not in result.stdout
+    assert "[rail] Checks still failed. Ship stopped." in result.stdout
+    assert (tmp_path / ".rail" / "npm-runs.txt").read_text(encoding="utf-8").splitlines() == ["check"]
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: real check fails" not in log.stdout
+
+
+def test_ship_still_refuses_when_auto_rerun_checks_fail(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    cfg_path = tmp_path / ".rail" / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["checks"] = [f'"{sys.executable}" -c "raise SystemExit(7)"']
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    assert run_cli(tmp_path, "review").returncode == 0
+    checks_file = tmp_path / ".rail" / "state" / "last-checks.md"
+    checks_file.write_text("Exit code: 1\nold failure\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: fail checks")
+
+    assert result.returncode == 7, result.stderr + result.stdout
+    assert "[rail] Last checks are failed. Running checks now..." in result.stdout
+    assert "[rail] Checks still failed. Ship stopped." in result.stdout
+    assert "Fix checks and rerun `rail ship`, or use `--force` only if you intentionally accept the risk." in result.stdout
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: fail checks" not in log.stdout
+
+
+def test_ship_does_not_bypass_review_safety_when_auto_checks_pass(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: no review")
+
     assert result.returncode == 1
-    assert "Error: checks are older than current file changes." in result.stdout
+    assert "[rail] Last checks are missing. Running checks now..." in result.stdout
+    assert "no fresh review pack" in result.stdout
+
+
+def test_ship_force_does_not_auto_rerun_failed_checks(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
+    checks_file = tmp_path / ".rail" / "state" / "last-checks.md"
+    checks_file.write_text("Exit code: 1\nold failure\n", encoding="utf-8")
+
+    result = ship_without_remote(tmp_path, "test: forced ship", "--force")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Running checks now" not in result.stdout
+    assert "Warning: --force skips commit safety checks." in result.stdout
+    log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: forced ship" in log.stdout
 
 
 def test_ship_allows_missing_checks_override(tmp_path: Path) -> None:
@@ -1046,7 +1645,7 @@ def test_local_runtime_version_matches_public_alpha(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert "AI Rail v0.1.0a13" in result.stdout
+    assert "AI Rail v0.1.0a14" in result.stdout
 
 
 
@@ -1247,7 +1846,7 @@ def test_version_output_includes_author_and_repository() -> None:
     result = run_cli(ROOT, "--version")
 
     assert result.returncode == 0
-    assert "AI Rail 0.1.0a13" in result.stdout
+    assert "AI Rail 0.1.0a14" in result.stdout
     assert "Created by Afshin Saberi" in result.stdout
     assert "https://github.com/afshinsb/ai-rail" in result.stdout
 
@@ -1258,7 +1857,7 @@ def test_about_outputs_project_metadata() -> None:
     assert result.returncode == 0
     assert "AI Rail" in result.stdout
     assert "A local-first workflow rail and portable project brain for AI-assisted development." in result.stdout
-    assert "Version: 0.1.0a13" in result.stdout
+    assert "Version: 0.1.0a14" in result.stdout
     assert "Author: Afshin Saberi" in result.stdout
     assert "Repository: https://github.com/afshinsb/ai-rail" in result.stdout
     assert "Website: https://theafshin.com" in result.stdout
@@ -1307,6 +1906,7 @@ def test_alias_expansion_table_matches_documented_shortcuts() -> None:
         ("xd",): ["export", "--dry-run"],
         ("xf",): ["export", "--force"],
         ("rc",): ["release-check"],
+        ("clear",): ["clear-active"],
         ("next", "--copy"): ["next", "--copy"],
     }
 

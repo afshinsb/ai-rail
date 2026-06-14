@@ -2,6 +2,15 @@
 
 Maintained by Afshin Saberi.
 
+## 0.1.0a14
+
+- Slimmed Model 1 coding prompts to reduce token use and scope drift.
+- Removed default `.rail/PROJECT.md` and `.rail/AGENTS.md` reads from coding prompts.
+- Added expected-files and hard-scope sections to coding prompts.
+- Clarified that coding agents should not run tests by default; humans verify with `rail v`.
+- Clarified strict Rail-readable roadmap prompt boundaries.
+- No breaking changes.
+
 ## 0.1.0a13
 
 - Cleaned `.rail/PROJECT.md` import behavior so default placeholder sections are removed after successful roadmap import.
