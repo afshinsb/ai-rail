@@ -4,9 +4,9 @@ AI Rail is a local CLI for keeping AI coding work scoped to one GitHub issue at 
 
 ## Full Lifecycle
 
-`.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
+`.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the permanent remote `.rail/PROJECT.md` mirror; its body contains the managed PROJECT.md memory, it should be labeled `ai-rail-roadmap`, and it stays open. GitHub implementation issues are only the active execution queue and close after shipping.
 
-Roadmap task state lives in exactly one strict `AI RAIL ROADMAP START/END` block inside `.rail/PROJECT.md`. Rail only marks tasks complete inside that block. Future tasks use `Pn-Txx | TBD | title`; the phase AI creates the next issue slice and replaces `TBD` with issue numbers when those GitHub issues exist.
+Roadmap task state lives in exactly one strict `AI RAIL ROADMAP START/END` block inside `.rail/PROJECT.md`. Rail only marks tasks complete inside that block. Future tasks use `Pn-Txx | TBD | title`; the phase AI creates the next issue slice and replaces `TBD` with issue numbers when those GitHub issues exist. The roadmap mirror issue itself must never appear as a task line inside that block.
 
 Use `rail plan --copy` before the first coding issue exists. Paste it into a GitHub-connected AI agent so it can audit the repo, create or update one phased roadmap issue, and create all issues for the first active execution slice. Then run `rail import` to import the roadmap issue into `.rail/PROJECT.md`.
 

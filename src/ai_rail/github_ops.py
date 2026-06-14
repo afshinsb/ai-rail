@@ -50,7 +50,7 @@ def fetch_github_issues(repo: str, state_value: str, run_func: RunFunc, limit: i
             "--repo", repo,
             "--state", state_value,
             "--limit", str(limit),
-            "--json", "number,title,body,updatedAt,state",
+            "--json", "number,title,body,updatedAt,state,labels",
         ],
         45,
     )

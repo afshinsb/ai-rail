@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -107,6 +108,7 @@ def install_fake_gh(path: Path, monkeypatch, *, open_issues: list[dict], closed_
     for key in path_keys:
         monkeypatch.setitem(ENV, key, str(fake_dir) + os.pathsep + ENV.get(key, existing_path))
     monkeypatch.setitem(ENV, "PATH", str(fake_dir) + os.pathsep + ENV.get("PATH", existing_path))
+    monkeypatch.setenv("PATH", str(fake_dir) + os.pathsep + os.environ.get("PATH", ""))
 
 
 def install_fake_npm(path: Path, monkeypatch) -> None:
@@ -390,6 +392,42 @@ def test_doctor_warns_when_roadmap_issue_selection_is_ambiguous(tmp_path: Path, 
     assert doctor.returncode == 0, doctor.stderr + doctor.stdout
     assert "[rail] Warning: could not inspect roadmap issue:" in doctor.stdout
     assert "multiple open roadmap issues found and none matches `Roadmap: Demo functional MVP`" in doctor.stdout
+
+
+def test_doctor_warns_when_roadmap_issue_is_listed_as_task(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    assert run_cli(tmp_path, "init", "--stack", "static", "--project-name", "Demo").returncode == 0
+    install_fake_gh(
+        tmp_path,
+        monkeypatch,
+        open_issues=[
+            {
+                "number": 1,
+                "title": "Roadmap: Demo functional MVP",
+                "body": "",
+                "labels": [{"name": "ai-rail-roadmap"}],
+                "updatedAt": "2026-01-01T00:00:00Z",
+            }
+        ],
+    )
+    (tmp_path / ".rail" / "PROJECT.md").write_text(
+        "<!-- AI RAIL ROADMAP START -->\n\n"
+        "## Phase P1 - Foundation\n"
+        "Status: active\n\n"
+        "### Tasks\n"
+        "- [ ] P1-T01 | #1 | Update roadmap mirror\n"
+        "\n<!-- AI RAIL ROADMAP END -->\n",
+        encoding="utf-8",
+    )
+
+    doctor = run_cli(tmp_path, "doctor")
+
+    assert doctor.returncode == 0, doctor.stderr + doctor.stdout
+    assert "PROJECT.md roadmap lists roadmap mirror issue #1 as a normal task." in doctor.stdout
+    assert "The roadmap issue is the container/mirror for PROJECT.md" in doctor.stdout
+    assert "should stay open" in doctor.stdout
+    assert "should not appear as a normal task line" in doctor.stdout
 
 
 def test_init_rerun_preserves_existing_project_name(tmp_path: Path) -> None:
@@ -739,6 +777,10 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert "next recommended issue/task" in result.stdout
     assert "phased" in result.stdout.lower()
     assert "Roadmap: Road Demo functional MVP" in result.stdout
+    assert "Label it `ai-rail-roadmap`." in result.stdout
+    assert "Keep it open permanently as the remote `.rail/PROJECT.md` mirror." in result.stdout
+    assert "Never include the roadmap mirror issue itself as a task inside the strict roadmap block." in result.stdout
+    assert "Close only normal implementation task issues" in result.stdout
     assert "usually 3-10 right-sized implementation issues" in result.stdout
     assert "do not create GitHub issues for the entire long-term roadmap" in result.stdout
     assert "## Goal" in result.stdout
@@ -778,6 +820,10 @@ def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "Roadmap: Phase Demo functional MVP" in result.stdout
+    assert "Label it `ai-rail-roadmap`." in result.stdout
+    assert "Keep it open permanently as the remote `.rail/PROJECT.md` mirror." in result.stdout
+    assert "Never include the roadmap mirror issue itself as a task inside the strict roadmap block." in result.stdout
+    assert "Close only normal implementation task issues" in result.stdout
     assert "phase-audit agent" in result.stdout
     assert "AI RAIL PROJECT MEMORY START" in result.stdout
     assert "run `rail import` locally" in result.stdout
@@ -846,6 +892,25 @@ def test_import_fails_without_roadmap_issue(tmp_path: Path, monkeypatch) -> None
 
     assert result.returncode == 1
     assert "No open roadmap issue found. Run `rail plan --copy` first." in result.stderr
+
+
+def test_import_reports_closed_roadmap_issue_recovery(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    body = f"<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n{strict_roadmap_block()}\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(
+        tmp_path,
+        monkeypatch,
+        open_issues=[{"number": 2, "title": "Build thing", "body": "", "updatedAt": "2026-01-01T00:00:00Z"}],
+        closed_issues=[{"number": 7, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-02T00:00:00Z"}],
+    )
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 1
+    assert "Found closed roadmap issue #7. Reopen it with: gh issue reopen 7" in result.stderr
+    assert "CHANGE_ME" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
 
 
 def test_import_extracts_managed_memory_and_writes_project(tmp_path: Path, monkeypatch) -> None:
@@ -1080,6 +1145,30 @@ def test_next_warns_when_no_open_implementation_issue(tmp_path: Path, monkeypatc
     assert result.returncode == 1
     assert "No open implementation issues found." in result.stdout
     assert "Recommended next action: rail phase --copy" in result.stdout
+
+
+def test_next_selection_ignores_roadmap_issue_by_title(monkeypatch) -> None:
+    runtime_path = ROOT / "src" / "ai_rail" / "template" / ".rail" / "rail.py"
+    spec = importlib.util.spec_from_file_location("rail_runtime_for_test", runtime_path)
+    assert spec and spec.loader
+    runtime = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime)
+    issues = [
+        {"number": 1, "title": "Roadmap: Demo functional MVP", "body": "", "url": "https://example.test/1", "updatedAt": "2026-01-02T00:00:00Z"},
+        {"number": 2, "title": "Build thing", "body": "", "url": "https://example.test/2", "updatedAt": "2026-01-01T00:00:00Z"},
+    ]
+
+    def fake_run(cmd: list[str], timeout: int = 120, check: bool = False) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(issues), "")
+
+    monkeypatch.setattr(runtime, "gh_available", lambda: True)
+    monkeypatch.setattr(runtime, "detect_repo", lambda: "owner/project")
+    monkeypatch.setattr(runtime, "run", fake_run)
+
+    issue = runtime.fetch_issue("next")
+
+    assert issue["number"] == 2
+    assert issue["title"] == "Build thing"
 
 
 def test_next_no_open_issue_output_includes_active_phase_progress(tmp_path: Path, monkeypatch) -> None:

@@ -34,6 +34,7 @@ LOCAL_ROADMAP_START = "<!-- AI RAIL MANAGED ROADMAP START -->"
 LOCAL_ROADMAP_END = "<!-- AI RAIL MANAGED ROADMAP END -->"
 RAIL_ROADMAP_START = "<!-- AI RAIL ROADMAP START -->"
 RAIL_ROADMAP_END = "<!-- AI RAIL ROADMAP END -->"
+ROADMAP_LABEL = "ai-rail-roadmap"
 
 
 ISSUE_TEMPLATE = """## Goal
@@ -443,7 +444,7 @@ def fetch_github_issues(repo: str, state_value: str, limit: int = 100) -> list[d
         "--repo", repo,
         "--state", state_value,
         "--limit", str(limit),
-        "--json", "number,title,body,updatedAt,state",
+        "--json", "number,title,body,updatedAt,state,labels",
     ], timeout=45)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "GitHub issue list failed.")
@@ -454,8 +455,28 @@ def expected_roadmap_title(project_name: str) -> str:
     return f"Roadmap: {project_name} functional MVP"
 
 
+def issue_label_names(issue: dict[str, Any]) -> set[str]:
+    labels = issue.get("labels") or []
+    names: set[str] = set()
+    for label in labels:
+        if isinstance(label, str):
+            names.add(label)
+        elif isinstance(label, dict) and label.get("name"):
+            names.add(str(label["name"]))
+    return names
+
+
+def is_roadmap_mirror_issue(issue: dict[str, Any]) -> bool:
+    title = str(issue.get("title", "")).strip().lower()
+    return title.startswith("roadmap:") or ROADMAP_LABEL in issue_label_names(issue)
+
+
+def implementation_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in issues if not is_roadmap_mirror_issue(item)]
+
+
 def roadmap_issue_from_open_issues(open_issues: list[dict[str, Any]], expected_project_name: str | None = None) -> tuple[dict[str, Any] | None, bool]:
-    roadmap = [item for item in open_issues if "roadmap:" in str(item.get("title", "")).lower()]
+    roadmap = [item for item in open_issues if is_roadmap_mirror_issue(item)]
     if not roadmap:
         return None, False
     if expected_project_name:
@@ -484,7 +505,7 @@ def extract_strict_roadmap_blocks(text: str) -> list[str]:
 
 def render_managed_roadmap_from_issue(roadmap: dict[str, Any], open_issues: list[dict[str, Any]], closed_issues: list[dict[str, Any]]) -> str:
     body = str(roadmap.get("body") or "").strip() or "_No roadmap body captured._"
-    open_impl = [item for item in open_issues if item.get("number") != roadmap.get("number")]
+    open_impl = implementation_issues(open_issues)
     open_lines = "\n".join(f"- [ ] #{item.get('number')} {item.get('title')}" for item in open_impl) or "- None"
     closed_lines = "\n".join(f"- [x] #{item.get('number')} {item.get('title')}" for item in closed_issues) or "- None"
     next_issue = open_impl[0] if open_impl else None
@@ -644,6 +665,7 @@ def fetch_issue(issue_ref: str) -> dict[str, Any]:
             check=True,
         )
         issues = json.loads(result.stdout or "[]")
+        issues = implementation_issues(issues)
         if not issues:
             raise RuntimeError("No open GitHub issues found for `latest`.")
         issue = issues[0]
@@ -660,7 +682,7 @@ def fetch_issue(issue_ref: str) -> dict[str, Any]:
             timeout=45,
         )
         issues = json.loads(result.stdout or "[]") if result.returncode == 0 else []
-        issues = [item for item in issues if "roadmap:" not in str(item.get("title", "")).lower()]
+        issues = implementation_issues(issues)
         if not issues:
             result = run(
                 [
@@ -674,7 +696,7 @@ def fetch_issue(issue_ref: str) -> dict[str, Any]:
                 check=True,
             )
             issues = json.loads(result.stdout or "[]")
-            issues = [item for item in issues if "roadmap:" not in str(item.get("title", "")).lower()]
+            issues = implementation_issues(issues)
             issues = sorted(issues, key=lambda item: int(item["number"]))
         if not issues:
             raise RuntimeError("No open implementation issues found.")
@@ -1186,6 +1208,13 @@ Audit the repo enough to understand:
 Create or update one GitHub roadmap issue as the remote roadmap mirror, titled:
 Roadmap: {project_name} functional MVP
 
+Roadmap mirror issue rules:
+- Create/update exactly one roadmap mirror issue.
+- Label it `ai-rail-roadmap`.
+- Keep it open permanently as the remote `.rail/PROJECT.md` mirror.
+- Never include the roadmap mirror issue itself as a task inside the strict roadmap block.
+- Close only normal implementation task issues after work ships; do not close the roadmap mirror issue.
+
 Put the full roadmap/project memory inside the roadmap issue body. Include this exact managed block:
 
 {REMOTE_MEMORY_START}
@@ -1347,6 +1376,13 @@ Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
 Inspect the repo and GitHub Issues. Find the roadmap issue, usually titled like:
 Roadmap: {project_name} functional MVP
 
+Roadmap mirror issue rules:
+- Create/update exactly one roadmap mirror issue.
+- Label it `ai-rail-roadmap`.
+- Keep it open permanently as the remote `.rail/PROJECT.md` mirror.
+- Never include the roadmap mirror issue itself as a task inside the strict roadmap block.
+- Close only normal implementation task issues after work ships; do not close the roadmap mirror issue.
+
 Update the GitHub roadmap issue. Update the managed project-memory block inside the roadmap issue:
 
 {REMOTE_MEMORY_START}
@@ -1482,6 +1518,16 @@ def cmd_import(args: argparse.Namespace) -> int:
         project_name = str(load_config().get("project_name") or ROOT.name)
         roadmap, multiple = roadmap_issue_from_open_issues(open_issues, expected_project_name=project_name)
         if not roadmap:
+            closed_issues = fetch_github_issues(str(repo), "closed")
+            closed_roadmaps = sorted(
+                [item for item in closed_issues if is_roadmap_mirror_issue(item)],
+                key=lambda item: str(item.get("updatedAt") or ""),
+                reverse=True,
+            )
+            closed_roadmap = closed_roadmaps[0] if closed_roadmaps else None
+            if closed_roadmap:
+                print(f"Found closed roadmap issue #{closed_roadmap.get('number')}. Reopen it with: gh issue reopen {closed_roadmap.get('number')}", file=sys.stderr)
+                return 1
             print("No open roadmap issue found. Run `rail plan --copy` first.", file=sys.stderr)
             return 1
         closed_issues = fetch_github_issues(str(repo), "closed")
@@ -1502,7 +1548,7 @@ def cmd_import(args: argparse.Namespace) -> int:
         print(f"Import failed: {exc}", file=sys.stderr)
         return 1
 
-    open_impl = [item for item in open_issues if item.get("number") != roadmap.get("number")]
+    open_impl = implementation_issues(open_issues)
     next_issue = open_impl[0] if open_impl else None
     if multiple:
         print("[rail] Warning: multiple open roadmap issues found; imported the newest one.")

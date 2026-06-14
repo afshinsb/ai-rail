@@ -90,6 +90,8 @@ from ai_rail.roadmap import (
     ensure_strict_roadmap,
     extract_remote_memory,
     extract_strict_roadmap_blocks,
+    implementation_issues,
+    is_roadmap_mirror_issue,
     is_placeholder_project_memory,
     project_memory_template,
     roadmap_issue_from_open_issues,
@@ -893,6 +895,16 @@ def cmd_import(argv: list[str]) -> int:
         project_name = str(cfg().get("project_name") or root().name)
         roadmap, multiple = roadmap_issue_from_open_issues(open_issues, expected_project_name=project_name)
         if not roadmap:
+            closed_issues = fetch_github_issues(repo, "closed")
+            closed_roadmaps = sorted(
+                [item for item in closed_issues if is_roadmap_mirror_issue(item)],
+                key=lambda item: str(item.get("updatedAt") or ""),
+                reverse=True,
+            )
+            closed_roadmap = closed_roadmaps[0] if closed_roadmaps else None
+            if closed_roadmap:
+                print(f"Found closed roadmap issue #{closed_roadmap.get('number')}. Reopen it with: gh issue reopen {closed_roadmap.get('number')}", file=sys.stderr)
+                return 1
             print("No open roadmap issue found. Run `rail plan --copy` first.", file=sys.stderr)
             return 1
         closed_issues = fetch_github_issues(repo, "closed")
@@ -913,7 +925,7 @@ def cmd_import(argv: list[str]) -> int:
         print(f"Import failed: {exc}", file=sys.stderr)
         return 1
 
-    open_impl = [item for item in open_issues if item.get("number") != roadmap.get("number")]
+    open_impl = implementation_issues(open_issues)
     next_issue = open_impl[0] if open_impl else None
     if multiple:
         print("[rail] Warning: multiple open roadmap issues found; imported the newest one.")
@@ -1387,7 +1399,7 @@ def cmd_doctor(argv: list[str]) -> int:
                 roadmap, _multiple = roadmap_issue_from_open_issues(open_issues, expected_project_name=project_name)
                 if roadmap:
                     print("[rail] Roadmap issue exists, but local project memory is not imported. Run: rail import")
-                open_impl = [item for item in open_issues if "roadmap:" not in str(item.get("title", "")).lower()]
+                open_impl = implementation_issues(open_issues)
                 if not open_impl:
                     print("[rail] No open implementation issues found. Run `rail phase --copy` to create the next execution slice.")
             except RuntimeError as exc:
@@ -1396,7 +1408,18 @@ def cmd_doctor(argv: list[str]) -> int:
                 pass
     project_path = rail_dir() / "PROJECT.md"
     if project_path.exists():
-        roadmap_warnings = validate_rail_roadmap(project_path.read_text(encoding="utf-8", errors="replace"))
+        roadmap_issue_number = None
+        repo = detected_repository_for_github()
+        if repo and gh_available():
+            try:
+                open_issues = fetch_github_issues(repo, "open", limit=20)
+                project_name = str(cfg().get("project_name") or root().name)
+                roadmap, _multiple = roadmap_issue_from_open_issues(open_issues, expected_project_name=project_name)
+                if roadmap:
+                    roadmap_issue_number = roadmap.get("number")
+            except Exception:
+                pass
+        roadmap_warnings = validate_rail_roadmap(project_path.read_text(encoding="utf-8", errors="replace"), roadmap_issue_number=roadmap_issue_number)
         if roadmap_warnings:
             print("\n[rail] PROJECT.md roadmap warnings:")
             for item in roadmap_warnings:

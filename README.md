@@ -113,6 +113,8 @@ rail plan --copy
 rail import
 ```
 
+The planning AI creates or updates one GitHub roadmap issue labeled `ai-rail-roadmap`. That issue stays open as the remote `.rail/PROJECT.md` memory mirror; normal implementation task issues are the ones AI Rail closes after shipping. The strict PROJECT.md roadmap block should never list the roadmap mirror issue itself as a task.
+
 Then work one issue at a time:
 
 ```bash

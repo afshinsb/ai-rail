@@ -14,14 +14,35 @@ RAIL_TASK_RE = re.compile(r"^- \[(?P<status>[ x])\] (?P<issue>#\d+|TBD) \| (?P<t
 RAIL_TASK_ID_FIRST_RE = re.compile(rf"^- \[(?P<status>[ x])\] (?P<task_id>{RAIL_TASK_ID_PATTERN}) \| (?P<issue>#\d+|TBD) \| (?P<title>.+)$")
 RAIL_PHASE_RE = re.compile(r"^## Phase (?P<phase>P\d+)\b")
 RAIL_PHASE_STATUSES = {"planned", "active", "complete", "blocked"}
+ROADMAP_LABEL = "ai-rail-roadmap"
 
 
 def expected_roadmap_title(project_name: str) -> str:
     return f"Roadmap: {project_name} functional MVP"
 
 
+def issue_label_names(issue: dict[str, Any]) -> set[str]:
+    labels = issue.get("labels") or []
+    names: set[str] = set()
+    for label in labels:
+        if isinstance(label, str):
+            names.add(label)
+        elif isinstance(label, dict) and label.get("name"):
+            names.add(str(label["name"]))
+    return names
+
+
+def is_roadmap_mirror_issue(issue: dict[str, Any]) -> bool:
+    title = str(issue.get("title", "")).strip().lower()
+    return title.startswith("roadmap:") or ROADMAP_LABEL in issue_label_names(issue)
+
+
+def implementation_issues(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in issues if not is_roadmap_mirror_issue(item)]
+
+
 def roadmap_issue_from_open_issues(open_issues: list[dict[str, Any]], expected_project_name: str | None = None) -> tuple[dict[str, Any] | None, bool]:
-    roadmap = [item for item in open_issues if "roadmap:" in str(item.get("title", "")).lower()]
+    roadmap = [item for item in open_issues if is_roadmap_mirror_issue(item)]
     if not roadmap:
         return None, False
     if expected_project_name:
@@ -45,7 +66,7 @@ def extract_remote_memory(body: str) -> str | None:
 
 def render_managed_roadmap_from_issue(roadmap: dict[str, Any], open_issues: list[dict[str, Any]], closed_issues: list[dict[str, Any]]) -> str:
     body = str(roadmap.get("body") or "").strip() or "_No roadmap body captured._"
-    open_impl = [item for item in open_issues if item.get("number") != roadmap.get("number")]
+    open_impl = implementation_issues(open_issues)
     open_lines = "\n".join(f"- [ ] #{item.get('number')} {item.get('title')}" for item in open_impl) or "- None"
     closed_lines = "\n".join(f"- [x] #{item.get('number')} {item.get('title')}" for item in closed_issues) or "- None"
     next_issue = open_impl[0] if open_impl else None
@@ -173,7 +194,7 @@ def ensure_strict_roadmap(managed: str) -> tuple[str, list[str]]:
     return (managed.rstrip() + "\n\n" + default_strict_roadmap_block()).strip(), warnings
 
 
-def validate_rail_roadmap(text: str) -> list[str]:
+def validate_rail_roadmap(text: str, roadmap_issue_number: int | str | None = None) -> list[str]:
     warnings: list[str] = []
     blocks = extract_strict_roadmap_blocks(text)
     if not blocks:
@@ -216,6 +237,11 @@ def validate_rail_roadmap(text: str) -> list[str]:
                 if issue in issues:
                     warnings.append(f"PROJECT.md roadmap has duplicate issue ref `{issue}`.")
                 issues.add(issue)
+                if roadmap_issue_number is not None and issue == f"#{roadmap_issue_number}":
+                    warnings.append(
+                        f"PROJECT.md roadmap lists roadmap mirror issue #{roadmap_issue_number} as a normal task. "
+                        "The roadmap issue is the container/mirror for PROJECT.md, should stay open, and should not appear as a normal task line."
+                    )
     if not saw_phase:
         warnings.append("PROJECT.md roadmap has no `## Phase Pn` sections.")
     if len(active_phases) > 1:

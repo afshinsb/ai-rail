@@ -4,11 +4,11 @@
 
 AI Rail is a local CLI. It gives the current repo a project brain and a one-issue-at-a-time workflow for AI coding tools.
 
-`.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
+`.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the permanent remote `.rail/PROJECT.md` mirror, should be labeled `ai-rail-roadmap`, and stays open. GitHub implementation issues are only the active execution queue and close after shipping.
 
 On first import, `rail import` replaces the placeholder project-memory template with the imported managed roadmap memory. Later imports update only the managed block and preserve human notes outside the markers.
 
-Imported project memory must contain one Rail-readable `AI RAIL ROADMAP START/END` block. Task lines use `TASK_ID | ISSUE | TITLE`, such as `P1-T01 | #123 | Title` or `P1-T02 | TBD | Title`. `rail doctor` warns when `.rail/PROJECT.md` is missing that block or has malformed task lines, duplicate task IDs, duplicate issue refs, invalid phase statuses, or multiple active phases.
+Imported project memory must contain one Rail-readable `AI RAIL ROADMAP START/END` block. Task lines use `TASK_ID | ISSUE | TITLE`, such as `P1-T01 | #123 | Title` or `P1-T02 | TBD | Title`. The roadmap block must not list the roadmap mirror issue itself as a task; the mirror issue is the container for PROJECT.md memory, not implementation work. `rail doctor` warns when `.rail/PROJECT.md` is missing that block or has malformed task lines, duplicate task IDs, duplicate issue refs, invalid phase statuses, multiple active phases, or a roadmap mirror issue listed as a normal task.
 
 | Command | Purpose |
 |---|---|

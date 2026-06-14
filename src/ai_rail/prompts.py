@@ -37,6 +37,13 @@ Audit the repo enough to understand:
 Create or update one GitHub roadmap issue as the remote roadmap mirror, titled:
 Roadmap: {project_name} functional MVP
 
+Roadmap mirror issue rules:
+- Create/update exactly one roadmap mirror issue.
+- Label it `ai-rail-roadmap`.
+- Keep it open permanently as the remote `.rail/PROJECT.md` mirror.
+- Never include the roadmap mirror issue itself as a task inside the strict roadmap block.
+- Close only normal implementation task issues after work ships; do not close the roadmap mirror issue.
+
 Put the full roadmap/project memory inside the roadmap issue body. Include this exact managed block:
 
 {remote_memory_start}
@@ -215,6 +222,13 @@ Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
 
 Inspect the repo and GitHub Issues. Find the roadmap issue, usually titled like:
 Roadmap: {project_name} functional MVP
+
+Roadmap mirror issue rules:
+- Create/update exactly one roadmap mirror issue.
+- Label it `ai-rail-roadmap`.
+- Keep it open permanently as the remote `.rail/PROJECT.md` mirror.
+- Never include the roadmap mirror issue itself as a task inside the strict roadmap block.
+- Close only normal implementation task issues after work ships; do not close the roadmap mirror issue.
 
 Update the GitHub roadmap issue. Update the managed project-memory block inside the roadmap issue:
 

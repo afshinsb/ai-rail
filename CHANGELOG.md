@@ -2,6 +2,13 @@
 
 Maintained by Afshin Saberi.
 
+## Unreleased / 0.1.0a17
+
+- Roadmap mirror issues are now explicitly protected and labeled `ai-rail-roadmap`.
+- `rail import` gives a recovery hint when the roadmap mirror issue was accidentally closed.
+- `rail doctor` warns if the roadmap mirror issue appears as a normal roadmap task.
+- Normal task selection avoids roadmap mirror issues by title or label.
+
 ## 0.1.0a16
 
 - `rail upgrade` preserves local project memory, AI guidance files, generated state, reports, prompts, and config while updating template-managed runtime files.
