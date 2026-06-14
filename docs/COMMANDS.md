@@ -117,7 +117,7 @@ rail checks --run "npm run typecheck"
 rail checks --run "npm run typecheck" --run "npm run lint"
 ```
 
-For Node repos, `rail init --stack node` inspects `package.json` scripts and chooses the first available script from `check`, `typecheck`, `lint`, `test`, then `build`. `rail doctor` warns when the configured default `npm run check` does not exist and a better script is available.
+For Node repos, `rail init --stack node` inspects `package.json` scripts and chooses the first available script from `check`, `lint`, `typecheck`, then `test`. `rail doctor` warns when the configured default `npm run check` does not exist and a better script is available.
 
 ### Continue In A New AI Chat
 
@@ -131,6 +131,8 @@ rail handoff --for chatgpt --include-review --include-checks --copy
 rail snapshot
 rail export
 ```
+
+Privacy note: `rail snapshot`, handoff, and `rail export` can include active issue body text, project state, current task details, changed file names, and generated `.rail/brain/` context. Review generated files before sharing or committing them.
 
 ### Generate CI Workflow From Configured Checks
 

@@ -574,6 +574,16 @@ def planning_identity() -> tuple[str, str]:
     return project_name, str(repository)
 
 
+def unconfigured_repository_prompt_warning(repository: str) -> str:
+    if repository != "not configured":
+        return ""
+    return """
+
+STOP: Repository is not configured.
+- Do not create or update GitHub issues yet.
+- First configure `.rail/config.json` repository or run `rail init --refresh-config`."""
+
+
 def detected_repository_for_github() -> str | None:
     config = cfg()
     repository = config.get("repository")
@@ -640,18 +650,22 @@ def is_relative_to_path(path: Path, parent: Path) -> bool:
     return path == parent or parent in path.parents
 
 
-def backup_file(path: Path) -> Path:
-    backup = path.with_name(path.name + ".rail.bak")
-    if not backup.exists():
-        shutil.copy2(path, backup)
-        return backup
+def next_backup_path(path: Path) -> Path:
     i = 2
+    first = path.with_name(f"{path.name}.rail.bak.1")
+    if not first.exists():
+        return first
     while True:
         candidate = path.with_name(f"{path.name}.rail.bak.{i}")
         if not candidate.exists():
-            shutil.copy2(path, candidate)
             return candidate
         i += 1
+
+
+def backup_file(path: Path) -> Path:
+    backup = next_backup_path(path)
+    shutil.copy2(path, backup)
+    return backup
 
 
 def install_template(
@@ -889,7 +903,8 @@ def current_branch() -> str:
 def changed_files() -> list[str]:
     r = run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], timeout=30)
     if r.returncode != 0:
-        return []
+        message = r.stderr.strip() or r.stdout.strip() or "git status failed."
+        raise RuntimeError(f"Could not inspect changed files: {message}")
     files: list[str] = []
     parts = r.stdout.split("\0")
     i = 0
@@ -1376,8 +1391,7 @@ def is_placeholder_project_memory(text: str) -> bool:
 def backup_project_memory_before_replacement(path: Path) -> None:
     if not path.exists() or not path.is_file():
         return
-    backup = path.with_name(path.name + ".rail.bak")
-    shutil.copy2(path, backup)
+    backup = backup_file(path)
     backup_rel = str(backup.relative_to(root())).replace("\\", "/")
     print(f"[rail] Backed up .rail/PROJECT.md to {backup_rel}")
 
@@ -1397,6 +1411,7 @@ def update_local_project_memory(managed: str) -> None:
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
+        backup_project_memory_before_replacement(path)
         before = existing.split(LOCAL_ROADMAP_START, 1)[0].rstrip()
         after = existing.split(LOCAL_ROADMAP_END, 1)[1].lstrip()
         path.write_text(f"{before}\n\n{new_block}\n\n{after}", encoding="utf-8")
@@ -1945,7 +1960,7 @@ def render_plan_prompt() -> str:
     return f"""You are a GitHub-connected planning agent for this repository.
 
 Project: {project_name}
-Repository: {repository}
+Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
 
 Audit the repo enough to understand:
 - project purpose
@@ -2126,7 +2141,7 @@ def render_phase_prompt() -> str:
     return f"""You are a GitHub-connected phase-audit agent for this repository.
 
 Project: {project_name}
-Repository: {repository}
+Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
 
 Inspect the repo and GitHub Issues. Find the roadmap issue, usually titled like:
 Roadmap: {project_name} functional MVP
@@ -2822,9 +2837,10 @@ def write_managed_export(path: Path, content: str, *, force: bool = False, dry_r
         elif not force:
             return False, f"refused existing unmarked file: {path} (use --force to replace with backup)"
         else:
-            backup = path.with_name(path.name + ".rail.bak")
+            backup = next_backup_path(path)
             if not dry_run:
-                backup.write_text(existing, encoding="utf-8")
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, backup)
             new_text = content
             action = f"replaced with backup {backup}"
     else:
@@ -2840,7 +2856,7 @@ def write_managed_export(path: Path, content: str, *, force: bool = False, dry_r
 def cmd_export(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="rail export")
     parser.add_argument("--target", action="append", choices=["all", *sorted(EXPORT_TARGETS)], help="Export target. Repeatable. Default: all.")
-    parser.add_argument("--force", action="store_true", help="Replace existing unmarked files after writing a .rail.bak backup.")
+    parser.add_argument("--force", action="store_true", help="Replace existing unmarked files after writing a numbered .rail.bak.N backup.")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be written without changing files.")
     parser.add_argument("--no-snapshot", action="store_true", help="Do not refresh .rail/brain before exporting.")
     parser.add_argument("--max-history", type=int, default=5)
@@ -2922,7 +2938,11 @@ def cmd_ci_init(argv: list[str]) -> int:
           if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
 """)
 
-    check_steps = "".join(f"      - name: {cmd}\n        run: {cmd}\n" for cmd in checks)
+    def yaml_run_step(index: int, command: str) -> str:
+        indented = "\n".join(f"          {line}" for line in command.splitlines() or [""])
+        return f"      - name: Run check {index}\n        run: |\n{indented}\n"
+
+    check_steps = "".join(yaml_run_step(i, str(cmd)) for i, cmd in enumerate(checks, 1))
     content = """name: AI Rail Checks
 
 on:
@@ -2935,6 +2955,9 @@ jobs:
     steps:
 """ + "".join(setup_steps) + check_steps
 
+    if workflow.exists() and ns.force:
+        backup = backup_file(workflow)
+        print(f"Backed up existing workflow to {backup}")
     workflow.write_text(content, encoding="utf-8")
     print(f"Created {workflow}")
     return 0
@@ -3197,72 +3220,76 @@ def cmd_doctor(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] in {"-h", "--help"}:
-        print(f"AI Rail {VERSION}")
-        print("Daily: init, resume, plan, import, phase, next, handoff, verify, ship, snapshot, export")
-        print("Aliases: r, n, p, ph, im, v, s, snap, h, hc, hg, hl, x, xd, xf, rc")
-        print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, clear-active, sync, log, report, ci-init, upgrade, about, demo, release-check")
-        return 0
-    if argv[0] in {"--version", "version"}:
-        print(render_version(), end="")
-        return 0
+    try:
+        argv = list(sys.argv[1:] if argv is None else argv)
+        if not argv or argv[0] in {"-h", "--help"}:
+            print(f"AI Rail {VERSION}")
+            print("Daily: init, resume, plan, import, phase, next, handoff, verify, ship, snapshot, export")
+            print("Aliases: r, n, p, ph, im, v, s, snap, h, hc, hg, hl, x, xd, xf, rc")
+            print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, clear-active, sync, log, report, ci-init, upgrade, about, demo, release-check")
+            return 0
+        if argv[0] in {"--version", "version"}:
+            print(render_version(), end="")
+            return 0
 
-    argv = expand_alias(argv)
-    cmd, rest = argv[0], argv[1:]
-    if cmd == "init":
-        return cmd_init(rest)
-    if cmd == "upgrade":
-        return cmd_upgrade(rest)
-    if cmd == "doctor":
-        return cmd_doctor(rest)
-    if cmd in {"status", "active", "resume"}:
-        return cmd_status(rest)
-    if cmd == "next":
-        return cmd_next(rest)
-    if cmd == "plan":
-        return cmd_plan(rest)
-    if cmd == "import":
-        return cmd_import(rest)
-    if cmd == "phase":
-        return cmd_phase(rest)
-    if cmd == "verify":
-        return cmd_verify(rest)
-    if cmd == "ship":
-        return cmd_ship(rest)
-    if cmd == "snapshot":
-        return cmd_snapshot(rest)
-    if cmd == "handoff":
-        return cmd_handoff(rest)
-    if cmd == "export":
-        return cmd_export(rest)
-    if cmd == "demo":
-        return cmd_demo(rest)
-    if cmd == "about":
-        return cmd_about(rest)
-    if cmd == "release-check":
-        return cmd_release_check(rest)
-    if cmd == "start":
-        return cmd_start(rest)
-    if cmd == "prompt":
-        return cmd_prompt(rest)
-    if cmd == "patch":
-        return cmd_patch(rest)
-    if cmd == "done":
-        return cmd_done(rest)
-    if cmd == "clear-active":
-        return cmd_clear_active(rest)
-    if cmd == "log":
-        return cmd_log(rest)
-    if cmd == "report":
-        return cmd_report(rest)
-    if cmd == "ci-init":
-        return cmd_ci_init(rest)
-    if cmd == "checks":
-        return delegate([cmd, *rest], stream=True)
+        argv = expand_alias(argv)
+        cmd, rest = argv[0], argv[1:]
+        if cmd == "init":
+            return cmd_init(rest)
+        if cmd == "upgrade":
+            return cmd_upgrade(rest)
+        if cmd == "doctor":
+            return cmd_doctor(rest)
+        if cmd in {"status", "active", "resume"}:
+            return cmd_status(rest)
+        if cmd == "next":
+            return cmd_next(rest)
+        if cmd == "plan":
+            return cmd_plan(rest)
+        if cmd == "import":
+            return cmd_import(rest)
+        if cmd == "phase":
+            return cmd_phase(rest)
+        if cmd == "verify":
+            return cmd_verify(rest)
+        if cmd == "ship":
+            return cmd_ship(rest)
+        if cmd == "snapshot":
+            return cmd_snapshot(rest)
+        if cmd == "handoff":
+            return cmd_handoff(rest)
+        if cmd == "export":
+            return cmd_export(rest)
+        if cmd == "demo":
+            return cmd_demo(rest)
+        if cmd == "about":
+            return cmd_about(rest)
+        if cmd == "release-check":
+            return cmd_release_check(rest)
+        if cmd == "start":
+            return cmd_start(rest)
+        if cmd == "prompt":
+            return cmd_prompt(rest)
+        if cmd == "patch":
+            return cmd_patch(rest)
+        if cmd == "done":
+            return cmd_done(rest)
+        if cmd == "clear-active":
+            return cmd_clear_active(rest)
+        if cmd == "log":
+            return cmd_log(rest)
+        if cmd == "report":
+            return cmd_report(rest)
+        if cmd == "ci-init":
+            return cmd_ci_init(rest)
+        if cmd == "checks":
+            return delegate([cmd, *rest], stream=True)
 
-    # All unchanged advanced commands delegate to the local core.
-    return delegate([cmd, *rest])
+        # All unchanged advanced commands delegate to the local core.
+        return delegate([cmd, *rest])
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

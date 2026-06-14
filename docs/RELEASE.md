@@ -118,8 +118,8 @@ rail demo
 PyPI releases are published by GitHub Actions when a version tag is pushed:
 
 ```bash
-git tag v0.1.0a14
-git push origin v0.1.0a14
+git tag v0.1.0a15
+git push origin v0.1.0a15
 ```
 
 The `publish.yml` workflow builds, tests, checks distributions, and publishes to PyPI with Trusted Publishing. Do not configure PyPI API token secrets for this workflow.

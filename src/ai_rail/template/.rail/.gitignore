@@ -1,5 +1,9 @@
 __pycache__/
 *.pyc
+brain/
+*.rail.bak
+*.rail.bak.*
+npm-runs.txt
 state/*
 !state/.gitignore
 

@@ -83,6 +83,18 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def unique_backup_path(path: Path) -> Path:
+    i = 2
+    first = path.with_name(f"{path.name}.rail.bak.1")
+    if not first.exists():
+        return first
+    while True:
+        candidate = path.with_name(f"{path.name}.rail.bak.{i}")
+        if not candidate.exists():
+            return candidate
+        i += 1
+
+
 def load_json(path: Path, default: Any) -> Any:
     if not path.exists():
         return default
@@ -177,6 +189,7 @@ DANGEROUS_COMMIT_PATTERNS = [
 ]
 
 GENERATED_COMMIT_DIRS = {
+    ".rail/brain",
     "node_modules",
     "dist",
     "build",
@@ -191,10 +204,11 @@ GENERATED_COMMIT_DIRS = {
 def git_status_entries() -> list[tuple[str, str]]:
     """Return porcelain status/path pairs using NUL separators for robust paths."""
     if not git_available():
-        return []
+        raise RuntimeError("git is required to inspect changed files.")
     result = run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], timeout=30)
     if result.returncode != 0:
-        return []
+        message = result.stderr.strip() or result.stdout.strip() or "git status failed."
+        raise RuntimeError(f"Could not inspect changed files: {message}")
 
     entries: list[tuple[str, str]] = []
     parts = result.stdout.split("\0")
@@ -231,6 +245,8 @@ def is_dangerous_commit_path(rel_path: str) -> bool:
     parts = set(Path(normalized).parts)
 
     if normalized.startswith(".rail/state/"):
+        return True
+    if normalized.startswith(".rail/brain/"):
         return True
 
     if parts & GENERATED_COMMIT_DIRS:
@@ -410,6 +426,16 @@ def planning_identity() -> tuple[str, str]:
     return project_name, str(repository)
 
 
+def unconfigured_repository_prompt_warning(repository: str) -> str:
+    if repository != "not configured":
+        return ""
+    return """
+
+STOP: Repository is not configured.
+- Do not create or update GitHub issues yet.
+- First configure `.rail/config.json` repository or run `rail init --refresh-config`."""
+
+
 def fetch_github_issues(repo: str, state_value: str, limit: int = 100) -> list[dict[str, Any]]:
     gh = shutil.which("gh") or "gh"
     result = run([
@@ -536,7 +562,7 @@ def is_placeholder_project_memory(text: str) -> bool:
 def backup_project_memory_before_replacement() -> None:
     if not PROJECT_PATH.exists() or not PROJECT_PATH.is_file():
         return
-    backup = PROJECT_PATH.with_name(PROJECT_PATH.name + ".rail.bak")
+    backup = unique_backup_path(PROJECT_PATH)
     shutil.copy2(PROJECT_PATH, backup)
     print(f"[rail] Backed up .rail/PROJECT.md to .rail/{backup.name}")
 
@@ -552,6 +578,7 @@ def update_local_project_memory(managed: str) -> None:
         write_text(PROJECT_PATH, project_memory_template(managed))
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
+        backup_project_memory_before_replacement()
         before = existing.split(LOCAL_ROADMAP_START, 1)[0].rstrip()
         after = existing.split(LOCAL_ROADMAP_END, 1)[1].lstrip()
         write_text(PROJECT_PATH, f"{before}\n\n{new_block}\n\n{after}")
@@ -784,29 +811,33 @@ def build_codex_prompt(active: dict[str, Any]) -> str:
     expected_files = issue_section_items(body, "Files likely touched")
     checks = issue_section_items(body, "Acceptance checks")
 
-    read_only = [
-        f"GitHub issue #{issue_number}",
+    read_first = [
         ".rail/CODEX.md",
     ]
     lowered_body = body.lower()
     if "project-level context" in lowered_body or ".rail/project.md" in lowered_body:
-        read_only.append(".rail/PROJECT.md")
+        read_first.append(".rail/PROJECT.md")
 
-    expected_text = "\n".join(f"- {item.strip('`')}" for item in expected_files) if expected_files else "- Not specified in issue."
+    expected_text = "\n".join(f"- {item.strip('`')}" for item in expected_files) if expected_files else "- Not specified by the issue."
 
     return f"""Use this AI Rail task prompt. Do not invent a separate task.
 
 Task:
 GitHub issue #{issue_number} - {title}
 
-Read only:
-{chr(10).join(f"- {item}" for item in read_only)}
+The full issue body is included below. Do not fetch the GitHub issue unless local issue context is missing or contradictory.
+
+Read first:
+{chr(10).join(f"- {item}" for item in read_first)}
+
+Then inspect only the minimum project files needed to implement this issue.
 
 Expected files:
 {expected_text}
 
-Touch only these files unless one small helper file is truly required.
-If additional files are needed, stop and explain before editing.
+Inspect only the minimum files needed for this issue.
+Edit only files directly required by this issue.
+If the fix appears to require broad unrelated changes, stop and explain before editing.
 
 Hard scope:
 - Implement only this issue.
@@ -1129,7 +1160,7 @@ def render_plan_prompt() -> str:
     return f"""You are a GitHub-connected planning agent for this repository.
 
 Project: {project_name}
-Repository: {repository}
+Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
 
 Audit the repo enough to understand:
 - project purpose
@@ -1299,7 +1330,7 @@ def render_phase_prompt() -> str:
     return f"""You are a GitHub-connected phase-audit agent for this repository.
 
 Project: {project_name}
-Repository: {repository}
+Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
 
 Inspect the repo and GitHub Issues. Find the roadmap issue, usually titled like:
 Roadmap: {project_name} functional MVP
@@ -1689,8 +1720,8 @@ def cmd_issue_create(args: argparse.Namespace) -> int:
         body = args.body
 
     cmd = ["gh", "issue", "create", "--title", args.title]
+    tmp_path = STATE_DIR / "issue-create-body.md"
     if body:
-        tmp_path = STATE_DIR / "issue-create-body.md"
         write_text(tmp_path, body)
         cmd += ["--body-file", str(tmp_path)]
     for label in args.label or []:
@@ -1705,6 +1736,8 @@ def cmd_issue_create(args: argparse.Namespace) -> int:
         return result.returncode or 1
 
     url = result.stdout.strip()
+    if tmp_path.exists():
+        tmp_path.unlink()
     print(url)
     match = re.search(r"/issues/(\d+)", url)
     if args.start and match:

@@ -421,7 +421,7 @@ def test_init_force_backs_up_invalid_config_before_replacement(tmp_path: Path) -
     result = run_cli(tmp_path, "init", "--force", "--stack", "static")
 
     assert result.returncode == 0, result.stderr + result.stdout
-    backup = rail / "config.json.rail.bak"
+    backup = rail / "config.json.rail.bak.1"
     assert backup.read_text(encoding="utf-8") == "{not valid json\n"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert cfg["checks"] == []
@@ -696,6 +696,10 @@ def test_plan_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "GitHub-connected planning agent" in result.stdout
+    assert "Repository: not configured" in result.stdout
+    assert "STOP: Repository is not configured." in result.stdout
+    assert "Do not create or update GitHub issues yet." in result.stdout
+    assert "run `rail init --refresh-config`" in result.stdout
 
 
 def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) -> None:
@@ -733,6 +737,10 @@ def test_phase_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "GitHub-connected phase-audit agent" in result.stdout
+    assert "Repository: not configured" in result.stdout
+    assert "STOP: Repository is not configured." in result.stdout
+    assert "Do not create or update GitHub issues yet." in result.stdout
+    assert "run `rail init --refresh-config`" in result.stdout
 
 
 def test_import_fails_before_init(tmp_path: Path) -> None:
@@ -1044,6 +1052,7 @@ def test_clear_active_refuses_dirty_worktree_unless_forced(tmp_path: Path) -> No
 
 
 def test_ship_marks_project_task_complete(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
     rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
@@ -1064,6 +1073,7 @@ def test_ship_marks_project_task_complete(tmp_path: Path) -> None:
 
 
 def test_ship_ignores_loose_project_roadmap_prose(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
     rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
@@ -1109,6 +1119,7 @@ def test_phase_progress_parser_supports_task_id_first_roadmap_tasks() -> None:
 
 
 def test_ship_marks_task_id_first_issue_line_complete(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
     rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
@@ -1129,6 +1140,7 @@ def test_ship_marks_task_id_first_issue_line_complete(tmp_path: Path) -> None:
 
 
 def test_ship_marks_task_id_first_tbd_line_when_active_issue_mentions_task_id(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
     rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
@@ -1149,6 +1161,7 @@ def test_ship_marks_task_id_first_tbd_line_when_active_issue_mentions_task_id(tm
 
 
 def test_ship_leaves_project_unchanged_when_no_safe_roadmap_match(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
     rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
@@ -1170,6 +1183,7 @@ def test_ship_leaves_project_unchanged_when_no_safe_roadmap_match(tmp_path: Path
 
 
 def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
     rail.write_text(
@@ -1201,6 +1215,7 @@ def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path)
 
 
 def test_ship_restores_project_memory_when_commit_fails(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
     rail.write_text(
@@ -1226,6 +1241,7 @@ def test_ship_restores_project_memory_when_commit_fails(tmp_path: Path) -> None:
 
 
 def test_ship_does_not_fail_if_project_update_fails(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir(parents=True)
     rail.write_text("import sys\nprint('fake ' + sys.argv[1])\nraise SystemExit(0)\n", encoding="utf-8")
@@ -1510,6 +1526,47 @@ def test_force_codex_prompt_warns_on_patch(tmp_path: Path) -> None:
     result = run_cli(tmp_path, "prompt", "codex", "--force")
     assert "Warning: running Codex prompt despite active model" in result.stdout
     assert "unrecognized arguments: --force" not in result.stderr
+
+
+def test_codex_prompt_uses_embedded_issue_body_as_context(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    run_cli(tmp_path, "init", "--stack", "node")
+    body = """## Goal
+Add booking protection.
+
+## Files likely touched
+- src/bookings.py
+"""
+    active = {
+        "interaction_model": "codex",
+        "issue": {"number": 18, "title": "P5-T03 - Add atomic booking transaction", "body": body, "url": ""},
+    }
+    state = tmp_path / ".rail" / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "active.json").write_text(json.dumps(active), encoding="utf-8")
+
+    result = run_cli(tmp_path, "prompt", "codex")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "The full issue body is included below. Do not fetch the GitHub issue unless local issue context is missing or contradictory." in result.stdout
+    assert "Read first:\n- .rail/CODEX.md" in result.stdout
+    assert "Read only:\n- GitHub issue #18" not in result.stdout
+    assert "Expected files:\n- src/bookings.py" in result.stdout
+    assert "Inspect only the minimum files needed for this issue." in result.stdout
+    assert "Edit only files directly required by this issue." in result.stdout
+
+
+def test_codex_prompt_unspecified_expected_files_wording(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    run_cli(tmp_path, "init", "--stack", "node")
+    write_active_issue(tmp_path, number=18, title="P5-T03 - Add atomic booking transaction")
+
+    result = run_cli(tmp_path, "prompt", "codex")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "Expected files:\n- Not specified by the issue." in result.stdout
+    assert "Not specified in issue." not in result.stdout
+    assert "If the fix appears to require broad unrelated changes, stop and explain before editing." in result.stdout
 
 
 def test_force_patch_warns_on_codex(tmp_path: Path) -> None:
@@ -2133,6 +2190,7 @@ def test_ship_allows_stale_checks_override(tmp_path: Path) -> None:
 
 
 def test_ship_no_sync_stops_before_issue_close_and_keeps_active_state(tmp_path: Path) -> None:
+    git_init(tmp_path)
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir()
     rail.write_text(
@@ -2302,7 +2360,7 @@ def test_phase5_export_force_backs_up_unmarked_existing_file(tmp_path: Path) -> 
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "replaced with backup" in result.stdout
-    assert (tmp_path / "CLAUDE.md.rail.bak").read_text(encoding="utf-8") == "human claude memory\n"
+    assert (tmp_path / "CLAUDE.md.rail.bak.1").read_text(encoding="utf-8") == "human claude memory\n"
     assert "AI_RAIL_EXPORT_BEGIN" in existing.read_text(encoding="utf-8")
 
 
@@ -2315,7 +2373,7 @@ def test_export_force_creates_backup_before_overwrite(tmp_path: Path) -> None:
     result = run_cli(tmp_path, "export", "--target", "agents", "--force")
 
     assert result.returncode == 0, result.stderr + result.stdout
-    backup = tmp_path / "AGENTS.md.rail.bak"
+    backup = tmp_path / "AGENTS.md.rail.bak.1"
     assert backup.read_text(encoding="utf-8") == "human agents before force\n"
     rewritten = existing.read_text(encoding="utf-8")
     assert "human agents before force" not in rewritten

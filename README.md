@@ -230,7 +230,7 @@ Common aliases are thin wrappers over the long commands: `rail r` for `resume`, 
 
 Detailed commands such as `rail start`, `rail prompt`, `rail review`, `rail checks`, `rail commit`, `rail issue-close`, `rail done`, and `rail sync` remain available for manual control.
 
-For Node repos, `rail init --stack node` inspects `package.json` scripts and chooses the first available check command from `check`, `typecheck`, `lint`, `test`, then `build`. You can override checks manually:
+For Node repos, `rail init --stack node` inspects `package.json` scripts and chooses the first available check command from `check`, `lint`, `typecheck`, then `test`. You can override checks manually:
 
 ```bash
 rail checks --run "npm run typecheck"
@@ -267,7 +267,9 @@ AIDER.md
 .github/copilot-instructions.md
 ```
 
-Exports are safe by default. AI Rail updates its own managed block when markers are present, but refuses to overwrite existing human files unless you pass `--force`, which first writes a `.rail.bak` backup.
+Exports are safe by default. AI Rail updates its own managed block when markers are present, but refuses to overwrite existing human files unless you pass `--force`, which first writes a numbered `.rail.bak.N` backup.
+
+Privacy note: `rail snapshot`, handoff, and `rail export` can include active issue body text, project state, current task details, changed file names, and generated `.rail/brain/` context. Review generated files before sharing or committing them.
 
 ## Safety Defaults
 
@@ -276,7 +278,7 @@ Exports are safe by default. AI Rail updates its own managed block when markers 
 - there is no passing verified snapshot from `rail verify`
 - files changed after the last verified snapshot
 - configured checks changed after the last verified snapshot
-- dangerous/generated files such as `.env`, keys, local databases, `node_modules/`, `dist/`, or `.rail/state/` are changed
+- dangerous/generated files such as `.env`, keys, local databases, `node_modules/`, `dist/`, `.rail/brain/`, or `.rail/state/` are changed
 
 Escape hatches exist for advanced users, but the normal path is intentionally conservative.
 
