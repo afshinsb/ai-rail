@@ -70,6 +70,8 @@ def strict_roadmap_block(task_line: str = "- [ ] P1-T01 | #2 | Build thing") -> 
     )
 
 
+# This helper intentionally returns 1 in manual-pause mode because ship stops
+# before remote close/done work when the branch has not been pushed.
 def ship_without_remote(path: Path, message: str, *extra_args: str) -> subprocess.CompletedProcess[str]:
     return run_cli(path, "ship", message, "--no-push", "--no-close", "--no-done", "--no-sync", *extra_args)
 
@@ -368,6 +370,26 @@ def test_doctor_warns_on_duplicate_roadmap_issue_refs(tmp_path: Path) -> None:
     doctor = run_cli(tmp_path, "doctor")
 
     assert "duplicate issue ref `#2`" in doctor.stdout
+
+
+def test_doctor_warns_when_roadmap_issue_selection_is_ambiguous(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    assert run_cli(tmp_path, "init", "--stack", "static", "--project-name", "Demo").returncode == 0
+    install_fake_gh(
+        tmp_path,
+        monkeypatch,
+        open_issues=[
+            {"number": 1, "title": "Roadmap: Other", "body": "", "updatedAt": "2026-01-01T00:00:00Z"},
+            {"number": 2, "title": "Roadmap: Another", "body": "", "updatedAt": "2026-01-02T00:00:00Z"},
+        ],
+    )
+
+    doctor = run_cli(tmp_path, "doctor")
+
+    assert doctor.returncode == 0, doctor.stderr + doctor.stdout
+    assert "[rail] Warning: could not inspect roadmap issue:" in doctor.stdout
+    assert "multiple open roadmap issues found and none matches `Roadmap: Demo functional MVP`" in doctor.stdout
 
 
 def test_init_rerun_preserves_existing_project_name(tmp_path: Path) -> None:
@@ -960,6 +982,9 @@ def test_import_replaces_default_project_placeholders(tmp_path: Path, monkeypatc
     assert "## Non-negotiables" not in before_block
     doctor = run_cli(tmp_path, "doctor")
     assert "PROJECT.md contains CHANGE_ME placeholders" not in doctor.stdout
+    backup = tmp_path / ".rail" / "PROJECT.md.rail.bak.1"
+    assert backup.exists()
+    assert "CHANGE_ME" in backup.read_text(encoding="utf-8")
 
 
 def test_import_preserves_user_content_outside_managed_markers(tmp_path: Path, monkeypatch) -> None:
@@ -979,6 +1004,25 @@ def test_import_preserves_user_content_outside_managed_markers(tmp_path: Path, m
     assert "footer" in text
     assert "new roadmap" in text
     assert "old" not in text
+    assert not list((tmp_path / ".rail").glob("PROJECT.md.rail.bak.*"))
+
+
+def test_repeated_import_updates_managed_block_without_new_backup(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    project = tmp_path / ".rail" / "PROJECT.md"
+    project.write_text("# Human notes\n\nkeep me\n\n<!-- AI RAIL MANAGED ROADMAP START -->\nold\n<!-- AI RAIL MANAGED ROADMAP END -->\n", encoding="utf-8")
+    body = f"<!-- AI RAIL PROJECT MEMORY START -->\nnew roadmap\n\n{strict_roadmap_block()}\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
+
+    first = run_cli(tmp_path, "import")
+    second = run_cli(tmp_path, "import")
+
+    assert first.returncode == 0, first.stderr + first.stdout
+    assert second.returncode == 0, second.stderr + second.stdout
+    assert "new roadmap" in project.read_text(encoding="utf-8")
+    assert not list((tmp_path / ".rail").glob("PROJECT.md.rail.bak.*"))
 
 
 def test_import_appends_managed_block_after_human_notes_without_markers(tmp_path: Path, monkeypatch) -> None:
@@ -998,8 +1042,7 @@ def test_import_appends_managed_block_after_human_notes_without_markers(tmp_path
     assert "AI RAIL MANAGED ROADMAP START" in text
     assert "- [ ] P1-T01 | #2 | Build invoices" in text
     backup = tmp_path / ".rail" / "PROJECT.md.rail.bak.1"
-    assert backup.exists()
-    assert backup.read_text(encoding="utf-8") == "# Human project notes\n\nThis app handles invoices.\n"
+    assert not backup.exists()
 
 
 def test_next_does_not_import_and_warns_on_placeholders(tmp_path: Path, monkeypatch) -> None:

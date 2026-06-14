@@ -4,9 +4,11 @@ Maintained by Afshin Saberi.
 
 ## 0.1.0a16
 
-- Safer roadmap issue selection during import.
-- PROJECT.md backup before all import writes.
-- Release-check covers split Python modules.
+- `rail upgrade` preserves local project memory, AI guidance files, generated state, reports, prompts, and config while updating template-managed runtime files.
+- Safer roadmap import selects the expected project roadmap issue, preserves human PROJECT/AI files, and avoids noisy backups on normal managed-block updates while keeping backups for placeholder/full PROJECT.md replacement.
+- Clarified manual pause behavior for `--no-sync` and `--no-push`, including pausing before issue-close/done when the branch has not been pushed.
+- Added same-branch ship guard coverage, split the runtime into focused modules, and expanded release-check coverage for those modules.
+- Added tests for safer import, backup behavior, manual pause modes, release checks, and module split regressions.
 
 ## 0.1.0a15
 

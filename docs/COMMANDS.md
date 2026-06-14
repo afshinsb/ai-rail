@@ -110,7 +110,7 @@ rail ship "fix(scope): message"
 
 By default, `rail ship` means the issue branch is integrated into the configured default branch. It commits and pushes the issue branch, verifies the default branch and `.rail/rail.py`, checks out and pulls the default branch, merges the issue branch, pushes the default branch, then closes the issue and clears active state. If the merge conflicts, the issue remains open and active state remains. If `.rail/` is not tracked on the default branch, ship pauses before checkout so `.rail/rail.py`, `.rail/PROJECT.md`, `.rail/config.json`, and local state folders are not removed.
 
-`rail ship --no-push`, `rail ship --no-sync`, and `rail ship --no-merge` are pause/manual modes. They do not close the issue or clear active state unless the default branch was integrated and pushed; merge and push manually before running `rail issue-close --commit && rail done && rail sync`.
+`rail ship --no-push`, `rail ship --no-sync`, and `rail ship --no-merge` are pause/manual modes. `--no-push` commits locally but pauses before issue-close/done because the branch was not pushed. These modes do not close the issue or clear active state unless the default branch was integrated and pushed; merge and push manually before running `rail issue-close --commit && rail done && rail sync`.
 
 ### Run A Focused Check
 

@@ -92,7 +92,6 @@ from ai_rail.roadmap import (
     extract_strict_roadmap_blocks,
     is_placeholder_project_memory,
     project_memory_template,
-    render_managed_roadmap_from_issue,
     roadmap_issue_from_open_issues,
     roadmap_task_id_mentions,
     validate_rail_roadmap,
@@ -717,8 +716,8 @@ def update_local_project_memory(managed: str) -> None:
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     existing = path.read_text(encoding="utf-8", errors="replace")
-    backup_project_memory_before_replacement(path)
     if is_placeholder_project_memory(existing) or ("CHANGE_ME:" in existing and "## Roadmap maintenance rules" in existing and RAIL_ROADMAP_START in existing):
+        backup_project_memory_before_replacement(path)
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
@@ -973,7 +972,7 @@ def cmd_ship(argv: list[str]) -> int:
     """
     parser = argparse.ArgumentParser(prog="rail ship")
     parser.add_argument("message", help="Commit message.")
-    parser.add_argument("--no-push", action="store_true", help="Commit but do not push.")
+    parser.add_argument("--no-push", action="store_true", help="Commit but do not push; ship pauses before issue-close/done.")
     parser.add_argument("--amend", action="store_true", help="Amend previous commit.")
     parser.add_argument("--force", action="store_true", help="Pass --force to commit/done where applicable.")
     parser.add_argument("--allow-missing-checks", action="store_true", help="Allow ship when checks are missing/unknown.")
@@ -1384,12 +1383,15 @@ def cmd_doctor(argv: list[str]) -> int:
         if repo and gh_available():
             try:
                 open_issues = fetch_github_issues(repo, "open", limit=20)
-                roadmap, _multiple = roadmap_issue_from_open_issues(open_issues)
+                project_name = str(cfg().get("project_name") or root().name)
+                roadmap, _multiple = roadmap_issue_from_open_issues(open_issues, expected_project_name=project_name)
                 if roadmap:
                     print("[rail] Roadmap issue exists, but local project memory is not imported. Run: rail import")
                 open_impl = [item for item in open_issues if "roadmap:" not in str(item.get("title", "")).lower()]
                 if not open_impl:
                     print("[rail] No open implementation issues found. Run `rail phase --copy` to create the next execution slice.")
+            except RuntimeError as exc:
+                print(f"[rail] Warning: could not inspect roadmap issue: {exc}")
             except Exception:
                 pass
     project_path = rail_dir() / "PROJECT.md"

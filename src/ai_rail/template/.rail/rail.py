@@ -586,8 +586,8 @@ def update_local_project_memory(managed: str) -> None:
         write_text(PROJECT_PATH, project_memory_template(managed))
         return
     existing = read_text(PROJECT_PATH)
-    backup_project_memory_before_replacement()
-    if is_placeholder_project_memory(existing):
+    if is_placeholder_project_memory(existing) or ("CHANGE_ME:" in existing and "## Roadmap maintenance rules" in existing and RAIL_ROADMAP_START in existing):
+        backup_project_memory_before_replacement()
         write_text(PROJECT_PATH, project_memory_template(managed))
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
