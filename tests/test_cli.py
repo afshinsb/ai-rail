@@ -2168,7 +2168,7 @@ def test_local_runtime_version_matches_public_alpha(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert "AI Rail v0.1.0a14" in result.stdout
+    assert "AI Rail v0.1.0a15" in result.stdout
 
 
 
@@ -2369,7 +2369,7 @@ def test_version_output_includes_author_and_repository() -> None:
     result = run_cli(ROOT, "--version")
 
     assert result.returncode == 0
-    assert "AI Rail 0.1.0a14" in result.stdout
+    assert "AI Rail 0.1.0a15" in result.stdout
     assert "Created by Afshin Saberi" in result.stdout
     assert "https://github.com/afshinsb/ai-rail" in result.stdout
 
@@ -2380,7 +2380,7 @@ def test_about_outputs_project_metadata() -> None:
     assert result.returncode == 0
     assert "AI Rail" in result.stdout
     assert "A local-first workflow rail and portable project brain for AI-assisted development." in result.stdout
-    assert "Version: 0.1.0a14" in result.stdout
+    assert "Version: 0.1.0a15" in result.stdout
     assert "Author: Afshin Saberi" in result.stdout
     assert "Repository: https://github.com/afshinsb/ai-rail" in result.stdout
     assert "Website: https://theafshin.com" in result.stdout

@@ -2,6 +2,12 @@
 
 Maintained by Afshin Saberi.
 
+## 0.1.0a15
+
+- Restored Python 3.10 compatibility with a conditional `tomli` fallback for TOML parsing.
+- Finished public-alpha cleanup and repo-local runtime consistency fixes.
+- No breaking changes.
+
 ## 0.1.0a14
 
 - Slimmed Model 1 coding prompts to reduce token use and scope drift.

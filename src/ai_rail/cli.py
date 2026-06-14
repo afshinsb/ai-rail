@@ -18,7 +18,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib
 
-VERSION = "0.1.0a14"
+VERSION = "0.1.0a15"
 PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain for AI-assisted development."
 AUTHOR_NAME = "Afshin Saberi"
 PROJECT_REPOSITORY = "https://github.com/afshinsb/ai-rail"
