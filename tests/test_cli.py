@@ -969,11 +969,42 @@ def test_next_no_open_issue_output_includes_active_phase_progress(tmp_path: Path
     result = run_cli(tmp_path, "next", "--no-prompt", "--no-branch")
 
     assert result.returncode == 1
-    assert "❌ No open implementation issues found." in result.stdout
-    assert "ℹ️ Active phase: P4 - Account/runtime foundation and workflow cleanup" in result.stdout
-    assert "ℹ️ Progress: 1/2 tasks complete" in result.stdout
-    assert "ℹ️ Next roadmap task: P4-T08 - Add production rate-limit and runtime storage boundary" in result.stdout
-    assert "💡 Recommended next action: rail phase --copy → rail import → rail n" in result.stdout
+    assert any(
+        line in result.stdout
+        for line in (
+            "\u274c No open implementation issues found.",
+            "Error: No open implementation issues found.",
+        )
+    )
+    assert any(
+        line in result.stdout
+        for line in (
+            "\u2139\ufe0f Active phase: P4 - Account/runtime foundation and workflow cleanup",
+            "Info: Active phase: P4 - Account/runtime foundation and workflow cleanup",
+        )
+    )
+    assert any(
+        line in result.stdout
+        for line in (
+            "\u2139\ufe0f Progress: 1/2 tasks complete",
+            "Info: Progress: 1/2 tasks complete",
+        )
+    )
+    assert any(
+        line in result.stdout
+        for line in (
+            "\u2139\ufe0f Next roadmap task: P4-T08 - Add production rate-limit and runtime storage boundary",
+            "Info: Next roadmap task: P4-T08 - Add production rate-limit and runtime storage boundary",
+        )
+    )
+    assert any(
+        line in result.stdout
+        for line in (
+            "\U0001f4a1 Recommended next action: rail phase --copy \u2192 rail import \u2192 rail n",
+            "Tip: Recommended next action: rail phase --copy \u2192 rail import \u2192 rail n",
+            "Tip: Recommended next action: rail phase --copy -> rail import -> rail n",
+        )
+    )
     assert "Why: GitHub has no open implementation issues, but PROJECT.md still has unchecked TBD tasks." in result.stdout
 
 

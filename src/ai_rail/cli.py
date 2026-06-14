@@ -2,21 +2,125 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
+from ai_rail.checks import (
+    check_block_reason as checks_check_block_reason,
+    checks_result as checks_result_impl,
+    configured_check_commands as configured_check_commands_impl,
+    refresh_review_and_check_artifacts as refresh_review_and_check_artifacts_impl,
+    validate_verify_snapshot as validate_verify_snapshot_impl,
+    verify_fingerprint as verify_fingerprint_impl,
+    write_verify_snapshot as write_verify_snapshot_impl,
+)
+from ai_rail.brain import (
+    EXPORT_BEGIN,
+    EXPORT_END,
+    EXPORT_TARGETS,
+    BrainContext,
+    cmd_export as brain_cmd_export,
+    cmd_handoff as brain_cmd_handoff,
+    cmd_snapshot as brain_cmd_snapshot,
+    export_label_for_target as brain_export_label_for_target,
+    export_path_for_target as brain_export_path_for_target,
+    next_safe_action,
+    render_export_context as brain_render_export_context,
+    render_handoff as brain_render_handoff,
+    render_project_brain as brain_render_project_brain,
+    render_tool_export as brain_render_tool_export,
+    target_instructions,
+    write_managed_export as brain_write_managed_export,
+)
+from ai_rail.config import (
+    apply_detected_init_config,
+    can_update_stale_default_node_check,
+    check_output_mentions_missing_npm_script,
+    configured_repository,
+    detect_checks,
+    is_unconfigured_config_value,
+    is_unconfigured_repository,
+    missing_npm_check_recovery,
+    npm_run_script,
+    package_json_scripts,
+    pyproject_data,
+    suggested_node_check_replacement,
+)
+from ai_rail.git_ops import (
+    artifact_is_fresh as git_artifact_is_fresh,
+    branch_exists_locally as git_branch_exists_locally,
+    branch_exists_remotely as git_branch_exists_remotely,
+    changed_files as git_changed_files,
+    current_branch as git_current_branch,
+    git_diff_for_fingerprint as git_diff_for_fingerprint_impl,
+    git_ref_exists as git_ref_exists_impl,
+    git_status_porcelain as git_status_porcelain_impl,
+    is_probably_text_file as git_is_probably_text_file,
+    latest_change_mtime as git_latest_change_mtime,
+    rail_runtime_tracked_on_branch as git_rail_runtime_tracked_on_branch,
+    reviewed_untracked_text_contents as git_reviewed_untracked_text_contents,
+    untracked_files as git_untracked_files,
+)
+from ai_rail.github_ops import (
+    detect_default_branch_from_gh,
+    detect_repo_from_gh,
+    fetch_github_issues as fetch_github_issues_impl,
+    gh_available,
+    parse_github_remote_url,
+)
+from ai_rail.prompts import (
+    render_phase_prompt as render_phase_prompt_text,
+    render_plan_prompt as render_plan_prompt_text,
+)
+from ai_rail.roadmap import (
+    LOCAL_ROADMAP_END,
+    LOCAL_ROADMAP_START,
+    RAIL_ROADMAP_END,
+    RAIL_ROADMAP_START,
+    RAIL_TASK_ID_PATTERN,
+    REMOTE_MEMORY_END,
+    REMOTE_MEMORY_START,
+    active_phase_summary_from_text,
+    ensure_strict_roadmap,
+    extract_remote_memory,
+    extract_strict_roadmap_blocks,
+    is_placeholder_project_memory,
+    project_memory_template,
+    render_managed_roadmap_from_issue,
+    roadmap_issue_from_open_issues,
+    roadmap_task_id_mentions,
+    validate_rail_roadmap,
+)
+from ai_rail.ship import ShipContext, run_ship
+from ai_rail.support import (
+    SupportContext,
+    cmd_about as support_cmd_about,
+    cmd_ci_init as support_cmd_ci_init,
+    cmd_demo as support_cmd_demo,
+    cmd_release_check as support_cmd_release_check,
+    render_about as support_render_about,
+    render_demo_script as support_render_demo_script,
+    render_version as support_render_version,
+)
+from ai_rail.template_ops import (
+    PRESERVED_TEMPLATE_DIRS,
+    TEMPLATE_CONFIG,
+    UPGRADE_PROTECTED_FILES,
+    TemplateContext,
+    backup_file as template_backup_file,
+    cmd_init as template_cmd_init,
+    cmd_upgrade as template_cmd_upgrade,
+    install_template as template_install_template,
+    is_relative_to_path,
+    next_backup_path,
+    print_install_summary,
+)
 
 VERSION = "0.1.0a15"
 PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain for AI-assisted development."
@@ -25,8 +129,6 @@ PROJECT_REPOSITORY = "https://github.com/afshinsb/ai-rail"
 AUTHOR_WEBSITE = "https://theafshin.com"
 PROJECT_LICENSE = "Apache-2.0"
 VALID_MODELS = {"codex", "patch", "ai-direct"}
-UNCONFIGURED_REPOSITORY_VALUES = {None, "", "CHANGE_ME"}
-UNCONFIGURED_CONFIG_VALUES = {None, "", "CHANGE_ME"}
 COMMAND_ALIASES = {
     "r": ["resume"],
     "n": ["next", "--copy"],
@@ -46,32 +148,6 @@ COMMAND_ALIASES = {
     "rc": ["release-check"],
     "clear": ["clear-active"],
 }
-PRESERVED_TEMPLATE_DIRS = {
-    Path(".rail/state"),
-    Path(".rail/reports"),
-    Path(".rail/prompts"),
-}
-TEMPLATE_CONFIG = Path(".rail/config.json")
-UPGRADE_PROTECTED_FILES = {
-    Path(".rail/PROJECT.md"),
-    Path(".rail/AGENTS.md"),
-    Path(".rail/CLAUDE.md"),
-    Path(".rail/AIDER.md"),
-    Path(".rail/CHATGPT.md"),
-    Path(".rail/CODEX.md"),
-    Path(".rail/AI_CONTRACT.md"),
-}
-REMOTE_MEMORY_START = "<!-- AI RAIL PROJECT MEMORY START -->"
-REMOTE_MEMORY_END = "<!-- AI RAIL PROJECT MEMORY END -->"
-LOCAL_ROADMAP_START = "<!-- AI RAIL MANAGED ROADMAP START -->"
-LOCAL_ROADMAP_END = "<!-- AI RAIL MANAGED ROADMAP END -->"
-RAIL_ROADMAP_START = "<!-- AI RAIL ROADMAP START -->"
-RAIL_ROADMAP_END = "<!-- AI RAIL ROADMAP END -->"
-RAIL_TASK_ID_PATTERN = r"P\d+-T\d+"
-RAIL_TASK_RE = re.compile(r"^- \[(?P<status>[ x])\] (?P<issue>#\d+|TBD) \| (?P<task_id>P\d+-T\d+) \| (?P<title>.+)$")
-RAIL_TASK_ID_FIRST_RE = re.compile(rf"^- \[(?P<status>[ x])\] (?P<task_id>{RAIL_TASK_ID_PATTERN}) \| (?P<issue>#\d+|TBD) \| (?P<title>.+)$")
-RAIL_PHASE_RE = re.compile(r"^## Phase (?P<phase>P\d+)\b")
-RAIL_PHASE_STATUSES = {"planned", "active", "complete", "blocked"}
 RAIL_ICONS = {
     "error": "\u274c",
     "warning": "\u26a0\ufe0f",
@@ -181,230 +257,12 @@ def rail_print(text: str = "", *, file: Any | None = None) -> None:
         print(fallback_cli_text(text), file=stream)
 
 
-def is_unconfigured_repository(value: Any) -> bool:
-    return value in UNCONFIGURED_REPOSITORY_VALUES
-
-
-def is_unconfigured_config_value(value: Any) -> bool:
-    return value is None or value == "" or value == "CHANGE_ME"
-
-
-NODE_CHECK_SCRIPT_PRIORITY = ["check", "lint", "typecheck", "test"]
-
-
-def package_json_scripts() -> dict[str, Any]:
-    package_path = root() / "package.json"
-    if not package_path.exists():
-        return {}
+def print_utf8_text(text: str) -> None:
     try:
-        data = json.loads(package_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-    scripts = data.get("scripts")
-    return scripts if isinstance(scripts, dict) else {}
-
-
-def package_json_name() -> str | None:
-    package_path = root() / "package.json"
-    if not package_path.exists():
-        return None
-    try:
-        data = json.loads(package_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-    name = data.get("name")
-    return str(name) if isinstance(name, str) and name.strip() else None
-
-
-def pyproject_data() -> dict[str, Any]:
-    path = root() / "pyproject.toml"
-    if not path.exists():
-        return {}
-    try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError:
-        return {}
-
-
-def pyproject_name() -> str | None:
-    project = pyproject_data().get("project")
-    if not isinstance(project, dict):
-        return None
-    name = project.get("name")
-    return str(name) if isinstance(name, str) and name.strip() else None
-
-
-def detect_project_name() -> str:
-    return package_json_name() or pyproject_name() or root().name
-
-
-def detected_node_check_command() -> str | None:
-    scripts = package_json_scripts()
-    for script in NODE_CHECK_SCRIPT_PRIORITY:
-        if script in scripts:
-            return f"npm run {script}"
-    return None
-
-
-def suggested_node_check_replacement() -> str | None:
-    return detected_node_check_command()
-
-
-def npm_run_script(command: str) -> str | None:
-    match = re.match(r"^\s*npm(?:\.cmd)?\s+(?:run|run-script)\s+([^\s]+)", command)
-    if not match:
-        return None
-    return match.group(1).strip("\"'")
-
-
-def check_output_mentions_missing_npm_script(output: str, script: str) -> bool:
-    if not output:
-        return False
-    missing_script = re.search(r"Missing script:\s*[\"']?" + re.escape(script) + r"[\"']?", output, re.IGNORECASE)
-    return bool(missing_script or re.search(r"npm\s+(?:error|ERR!)\s+Missing script", output, re.IGNORECASE))
-
-
-def missing_npm_check_recovery(checks: list[Any], output: str) -> tuple[str, str] | None:
-    scripts = package_json_scripts()
-    if not scripts:
-        return None
-    for command in checks:
-        if not isinstance(command, str):
-            continue
-        script = npm_run_script(command)
-        if not script:
-            continue
-        if script in scripts:
-            continue
-        if not check_output_mentions_missing_npm_script(output, script):
-            continue
-        replacement = detected_node_check_command()
-        if replacement and replacement != command:
-            return command, replacement
-    return None
-
-
-def can_update_stale_default_node_check(checks: list[Any], failed_command: str, replacement: str) -> bool:
-    failed_script = npm_run_script(failed_command)
-    return (
-        checks == ["npm run check"]
-        and failed_command == "npm run check"
-        and failed_script == "check"
-        and replacement != failed_command
-        and "check" not in package_json_scripts()
-    )
-
-
-def pytest_likely_configured() -> bool:
-    if (root() / "tests").is_dir():
-        return True
-    data = pyproject_data()
-    tool = data.get("tool")
-    return isinstance(tool, dict) and "pytest" in tool
-
-
-def detect_checks() -> list[str]:
-    if (root() / "package.json").exists():
-        command = detected_node_check_command()
-        return [command] if command else []
-    if (root() / "pyproject.toml").exists() and pytest_likely_configured():
-        return ["python -m pytest -q"]
-    return []
-
-
-def is_unconfigured_checks(value: Any) -> bool:
-    if is_unconfigured_config_value(value):
-        return True
-    if value == []:
-        return True
-    detected_checks = detect_checks()
-    default_checks = [
-        ["npm run check"],
-        detected_checks,
-    ]
-    return isinstance(value, list) and value in default_checks
-
-
-def npm_checks_missing_script(checks: Any) -> bool:
-    if not isinstance(checks, list):
-        return True
-    scripts = package_json_scripts()
-    if not scripts:
-        return False
-    for command in checks:
-        if not isinstance(command, str):
-            continue
-        script = npm_run_script(command)
-        if script and script not in scripts:
-            return True
-    return False
-
-
-def should_update_checks(value: Any, detected: list[str], *, first_config: bool) -> bool:
-    if first_config:
-        return True
-    if is_unconfigured_config_value(value):
-        return True
-    if value == []:
-        return bool(detected)
-    if npm_checks_missing_script(value) and detected:
-        return True
-    if value == ["npm run check"] and detected != value:
-        return True
-    return False
-
-
-def configured_repository(config: dict[str, Any]) -> str:
-    repository = config.get("repository")
-    if is_unconfigured_repository(repository):
-        return detect_repo_from_tools() or "not configured"
-    return str(repository)
-
-
-def apply_detected_init_config(
-    config: dict[str, Any],
-    *,
-    had_valid_config: bool,
-    project_name_arg: str | None,
-) -> tuple[dict[str, Any], list[str], list[str]]:
-    changed: list[str] = []
-    preserved: list[str] = []
-    first_config = not had_valid_config
-
-    detected_project = project_name_arg or detect_project_name()
-    if first_config or is_unconfigured_config_value(config.get("project_name")):
-        if config.get("project_name") != detected_project:
-            changed.append("project_name")
-        config["project_name"] = detected_project
-    else:
-        preserved.append("project_name")
-
-    detected_repo = detect_repo_from_tools()
-    if is_unconfigured_repository(config.get("repository")):
-        value = detected_repo or "CHANGE_ME"
-        if config.get("repository") != value:
-            changed.append("repository")
-        config["repository"] = value
-    else:
-        preserved.append("repository")
-
-    detected_branch = detect_default_branch()
-    if branch_exists(config.get("default_branch")):
-        preserved.append("default_branch")
-    else:
-        if config.get("default_branch") != detected_branch:
-            changed.append("default_branch")
-        config["default_branch"] = detected_branch
-
-    detected_checks = detect_checks()
-    if should_update_checks(config.get("checks"), detected_checks, first_config=first_config):
-        if config.get("checks") != detected_checks:
-            changed.append("checks")
-        config["checks"] = detected_checks
-    else:
-        preserved.append("checks")
-
-    return config, changed, preserved
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    print(text)
 
 
 def append_flag(args: list[str], enabled: bool, flag: str) -> None:
@@ -421,25 +279,29 @@ def expand_alias(argv: list[str]) -> list[str]:
     return [*expansion, *argv[1:]]
 
 
-def render_version() -> str:
-    return f"""AI Rail {VERSION}
+def support_context() -> SupportContext:
+    return SupportContext(
+        root=root,
+        rail_dir=rail_dir,
+        read_json=read_json,
+        safe_read_text=safe_read_text,
+        copy_to_clipboard=copy_to_clipboard,
+        backup_file=backup_file,
+        version=VERSION,
+        project_description=PROJECT_DESCRIPTION,
+        author_name=AUTHOR_NAME,
+        project_repository=PROJECT_REPOSITORY,
+        author_website=AUTHOR_WEBSITE,
+        project_license=PROJECT_LICENSE,
+    )
 
-Created by {AUTHOR_NAME}
-{PROJECT_REPOSITORY}
-"""
+
+def render_version() -> str:
+    return support_render_version(support_context())
 
 
 def render_about() -> str:
-    return f"""AI Rail
-
-{PROJECT_DESCRIPTION}
-
-Version: {VERSION}
-Author: {AUTHOR_NAME}
-Repository: {PROJECT_REPOSITORY}
-Website: {AUTHOR_WEBSITE}
-License: {PROJECT_LICENSE}
-"""
+    return support_render_about(support_context())
 
 
 def detect_repo_from_tools() -> str | None:
@@ -447,38 +309,28 @@ def detect_repo_from_tools() -> str | None:
 
     Prefer GitHub CLI when available, then fall back to the local git remote.
     """
-    if shutil.which("gh"):
-        result = run(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], timeout=10)
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+    repo = detect_repo_from_gh(run)
+    if repo:
+        return repo
     if shutil.which("git"):
         inside = run(["git", "rev-parse", "--is-inside-work-tree"], timeout=5)
         result = run(["git", "remote", "get-url", "origin"], timeout=5)
         url = result.stdout.strip()
         if url:
-            match = re.search(r"github\.com[:/](.+?)(?:\.git)?$", url)
-            if match:
-                return match.group(1)
+            repo = parse_github_remote_url(url)
+            if repo:
+                return repo
         if inside.returncode == 0 and inside.stdout.strip() == "true":
             return None
     return None
 
 
 def branch_exists_locally(branch: str) -> bool:
-    if not branch or not shutil.which("git"):
-        return False
-    result = run(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], timeout=5)
-    return result.returncode == 0
+    return git_branch_exists_locally(branch, run)
 
 
 def branch_exists_remotely(branch: str) -> bool:
-    if not branch or not shutil.which("git"):
-        return False
-    show_ref = run(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"], timeout=5)
-    if show_ref.returncode == 0:
-        return True
-    result = run(["git", "ls-remote", "--exit-code", "--heads", "origin", branch], timeout=10)
-    return result.returncode == 0
+    return git_branch_exists_remotely(branch, run)
 
 
 def branch_exists(branch: Any) -> bool:
@@ -491,10 +343,9 @@ def branch_exists(branch: Any) -> bool:
 
 
 def detect_default_branch() -> str:
-    if shutil.which("gh"):
-        result = run(["gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"], timeout=10)
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+    branch = detect_default_branch_from_gh(run)
+    if branch:
+        return branch
     if shutil.which("git"):
         result = run(["git", "symbolic-ref", "refs/remotes/origin/HEAD"], timeout=5)
         ref = result.stdout.strip()
@@ -517,39 +368,11 @@ def configured_default_branch() -> str:
 
 
 def git_ref_exists(ref: str) -> bool:
-    if not ref or not shutil.which("git"):
-        return False
-    result = run(["git", "rev-parse", "--verify", "--quiet", ref], timeout=5)
-    return result.returncode == 0
+    return git_ref_exists_impl(ref, run)
 
 
 def rail_runtime_tracked_on_branch(branch: str) -> bool:
-    if not branch or not shutil.which("git"):
-        return False
-    result = run(["git", "cat-file", "-e", f"{branch}:.rail/rail.py"], timeout=10)
-    return result.returncode == 0
-
-
-def print_rail_untracked_pause() -> None:
-    rail_print(f"{rail_icon('warning')} Ship paused: `.rail/` is not tracked on the default branch.")
-    rail_print(f"{rail_icon('info')} Checkout/sync could remove AI Rail runtime files.")
-    rail_print(f"{rail_icon('tip')} Recommended next action: commit `.rail/` on the default branch, then rerun rail ship.")
-
-
-def print_merge_conflict_pause(issue_branch: str, default_branch: str, *, issue_branch_pushed: bool) -> None:
-    push_state = "pushed to origin" if issue_branch_pushed else "committed locally but not pushed because --no-push was used"
-    rail_print(f"{rail_icon('warning')} Ship paused: merge into default branch has conflicts.")
-    rail_print(f"{rail_icon('warning')} Ship paused: merging issue branch `{issue_branch}` into default branch `{default_branch}` has conflicts.")
-    rail_print(f"{rail_icon('info')} Issue branch state: {push_state}.")
-    rail_print(f"{rail_icon('info')} GitHub issue is still open, and active state was preserved.")
-    rail_print(f"{rail_icon('info')} `.rail/PROJECT.md` may already be marked `[x]` for this issue on `{issue_branch}`.")
-    rail_print(f"{rail_icon('tip')} Resolve path: fix conflicts, run focused checks, `git add ...`, `git commit`, `git push origin {default_branch}`, then `rail issue-close --commit && rail done && rail sync`.")
-    rail_print(f"{rail_icon('tip')} Abort path: `git merge --abort`, then `git checkout {issue_branch}` to return to the issue branch.")
-
-
-def print_no_merge_warning() -> None:
-    rail_print(f"{rail_icon('warning')} rail ship --no-merge did not integrate this issue branch into the default branch.")
-    rail_print(f"{rail_icon('info')} This is an advanced/manual compatibility path; branch-only work is not fully shipped.")
+    return git_rail_runtime_tracked_on_branch(branch, run)
 
 
 def detect_repo_from_git_remote() -> str | None:
@@ -559,9 +382,9 @@ def detect_repo_from_git_remote() -> str | None:
     url = result.stdout.strip()
     if not url:
         return None
-    match = re.search(r"github\.com[:/](.+?)(?:\.git)?$", url)
-    if match:
-        return match.group(1)
+    repo = parse_github_remote_url(url)
+    if repo:
+        return repo
     return url
 
 
@@ -572,16 +395,6 @@ def planning_identity() -> tuple[str, str]:
     if is_unconfigured_repository(repository):
         repository = detect_repo_from_git_remote() or "not configured"
     return project_name, str(repository)
-
-
-def unconfigured_repository_prompt_warning(repository: str) -> str:
-    if repository != "not configured":
-        return ""
-    return """
-
-STOP: Repository is not configured.
-- Do not create or update GitHub issues yet.
-- First configure `.rail/config.json` repository or run `rail init --refresh-config`."""
 
 
 def detected_repository_for_github() -> str | None:
@@ -646,26 +459,22 @@ def delegate(args: list[str], *, stream: bool = False, extra_env: dict[str, str]
     return result.returncode
 
 
-def is_relative_to_path(path: Path, parent: Path) -> bool:
-    return path == parent or parent in path.parents
-
-
-def next_backup_path(path: Path) -> Path:
-    i = 2
-    first = path.with_name(f"{path.name}.rail.bak.1")
-    if not first.exists():
-        return first
-    while True:
-        candidate = path.with_name(f"{path.name}.rail.bak.{i}")
-        if not candidate.exists():
-            return candidate
-        i += 1
+def template_context() -> TemplateContext:
+    return TemplateContext(
+        root=root,
+        rail_dir=rail_dir,
+        local_py=local_py,
+        read_json=read_json,
+        write_json=write_json,
+        detect_repo_from_tools=detect_repo_from_tools,
+        branch_exists=branch_exists,
+        detect_default_branch=detect_default_branch,
+        version=VERSION,
+    )
 
 
 def backup_file(path: Path) -> Path:
-    backup = next_backup_path(path)
-    shutil.copy2(path, backup)
-    return backup
+    return template_backup_file(path)
 
 
 def install_template(
@@ -674,162 +483,21 @@ def install_template(
     force: bool = False,
     preserve_existing_files: set[Path] | None = None,
 ) -> dict[str, Any]:
-    preserved_existing_dirs = {rel for rel in PRESERVED_TEMPLATE_DIRS if (dst / rel).exists()}
-    protected_files = preserve_existing_files or set()
-    summary: dict[str, Any] = {
-        "created": 0,
-        "updated": 0,
-        "skipped": 0,
-        "preserved_dirs": sorted(str(path).replace("\\", "/") for path in preserved_existing_dirs),
-        "preserved_files": [],
-        "config": "created",
-        "config_backup": None,
-        "config_updates": [],
-    }
-
-    for p in src.rglob("*"):
-        rel = p.relative_to(src)
-        target = dst / rel
-        if p.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-            continue
-        if any(is_relative_to_path(rel, preserved) for preserved in preserved_existing_dirs):
-            summary["skipped"] += 1
-            continue
-        if rel in protected_files and target.exists():
-            summary["skipped"] += 1
-            summary["preserved_files"].append(str(rel).replace("\\", "/"))
-            continue
-        if rel == TEMPLATE_CONFIG and target.exists():
-            try:
-                read_json(target, {})
-            except json.JSONDecodeError:
-                backup = backup_file(target)
-                shutil.copy2(p, target)
-                summary["updated"] += 1
-                summary["config"] = "replaced"
-                summary["config_backup"] = str(backup.relative_to(dst)).replace("\\", "/")
-            else:
-                summary["skipped"] += 1
-                summary["config"] = "preserved"
-            continue
-        if target.exists() and not force:
-            summary["skipped"] += 1
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        existed = target.exists()
-        shutil.copy2(p, target)
-        summary["updated" if existed else "created"] += 1
-    return summary
-
-
-def print_install_summary(summary: dict[str, Any]) -> None:
-    print(f"- Created files: {summary['created']}")
-    print(f"- Updated files: {summary['updated']}")
-    print(f"- Skipped files: {summary['skipped']}")
-    config = summary["config"]
-    if config == "preserved":
-        print("- Preserved .rail/config.json")
-    elif config == "replaced":
-        print(f"- Backed up invalid .rail/config.json to {summary['config_backup']} and installed a fresh config")
-    else:
-        print("- Created .rail/config.json")
-    if summary["config_updates"]:
-        print("- Updated placeholder config values: " + ", ".join(summary["config_updates"]))
-    for preserved in summary["preserved_dirs"]:
-        print(f"- Preserved {preserved}/")
-    if summary["preserved_files"]:
-        print("- Preserved protected project/user files: " + ", ".join(summary["preserved_files"]))
+    return template_install_template(
+        template_context(),
+        src,
+        dst,
+        force=force,
+        preserve_existing_files=preserve_existing_files,
+    )
 
 
 def cmd_init(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail init")
-    parser.add_argument("--stack", choices=["node", "python", "static"], default="node")
-    parser.add_argument("--project-name")
-    parser.add_argument("--force", action="store_true")
-    parser.add_argument("--refresh-config", action="store_true", help="Re-detect safe config defaults without replacing state.")
-    ns = parser.parse_args(argv)
-
-    cfg_path = rail_dir() / "config.json"
-    had_config = cfg_path.exists()
-    template_path = resources.files("ai_rail") / "template"
-    summary = install_template(Path(str(template_path)), root(), force=ns.force)
-
-    cfg = read_json(cfg_path, {})
-    had_valid_config = had_config and summary["config"] == "preserved"
-    cfg, config_updates, config_preserved = apply_detected_init_config(
-        cfg,
-        had_valid_config=had_valid_config,
-        project_name_arg=ns.project_name,
-    )
-
-    summary["config_updates"] = config_updates
-    if summary["config"] in {"created", "replaced"} or config_updates:
-        write_json(cfg_path, cfg)
-
-    # Make the compatibility script executable when supported.
-    try:
-        local_py().chmod(local_py().stat().st_mode | 0o111)
-    except Exception:
-        pass
-
-    print(f"Initialized AI Rail v{VERSION} in {rail_dir()}")
-    print(f"Project: {cfg.get('project_name')}")
-    print(f"Repository: {cfg.get('repository')}")
-    print(f"Default branch: {cfg.get('default_branch')}")
-    checks = cfg.get("checks") or []
-    print(f"Checks: {', '.join(checks) if checks else 'none'}")
-    if config_preserved:
-        print("Preserved config values: " + ", ".join(config_preserved))
-    print_install_summary(summary)
-    print("\nNext:")
-    print("rail doctor")
-    print("rail status")
-    return 0
+    return template_cmd_init(argv, template_context())
 
 
 def cmd_upgrade(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail upgrade")
-    parser.add_argument("--refresh-config", action="store_true", help="Re-detect safe config defaults while upgrading.")
-    ns = parser.parse_args(argv)
-
-    if not rail_dir().exists():
-        print("No .rail folder found. Run: rail init", file=sys.stderr)
-        return 1
-
-    cfg_path = rail_dir() / "config.json"
-    had_config = cfg_path.exists()
-    template_path = resources.files("ai_rail") / "template"
-    summary = install_template(
-        Path(str(template_path)),
-        root(),
-        force=True,
-        preserve_existing_files=UPGRADE_PROTECTED_FILES,
-    )
-
-    config_preserved: list[str] = []
-    if ns.refresh_config:
-        cfg = read_json(cfg_path, {})
-        had_valid_config = had_config and summary["config"] == "preserved"
-        cfg, config_updates, config_preserved = apply_detected_init_config(
-            cfg,
-            had_valid_config=had_valid_config,
-            project_name_arg=None,
-        )
-        summary["config_updates"] = config_updates
-        if summary["config"] in {"created", "replaced"} or config_updates:
-            write_json(cfg_path, cfg)
-
-    try:
-        local_py().chmod(local_py().stat().st_mode | 0o111)
-    except Exception:
-        pass
-
-    print(f"Upgraded AI Rail local runtime/template files to v{VERSION}.")
-    if config_preserved:
-        print("Preserved config values: " + ", ".join(config_preserved))
-    print_install_summary(summary)
-    return 0
+    return template_cmd_upgrade(argv, template_context())
 
 
 def active() -> dict[str, Any] | None:
@@ -856,117 +524,47 @@ def set_active_model(model: str) -> None:
 
 
 def checks_result() -> str:
-    if not checks_path().exists():
-        return "missing"
-    text = checks_path().read_text(encoding="utf-8", errors="replace")
-    codes = [int(x) for x in re.findall(r"Exit code:\s*(\d+)", text)]
-    if not codes:
-        return "unknown"
-    return "passed" if all(c == 0 for c in codes) else "failed"
+    return checks_result_impl(checks_path())
 
 
 def latest_change_mtime(paths: list[str]) -> float | None:
-    mtimes: list[float] = []
-    for rel in paths:
-        path = root() / rel
-        if path.exists():
-            try:
-                mtimes.append(path.stat().st_mtime)
-            except OSError:
-                continue
-    return max(mtimes) if mtimes else None
+    return git_latest_change_mtime(root(), paths)
 
 
 def artifact_is_fresh(path: Path, paths: list[str]) -> bool:
-    if not path.exists():
-        return False
-    latest = latest_change_mtime(paths)
-    if latest is None:
-        return True
-    return path.stat().st_mtime + 1 >= latest
+    return git_artifact_is_fresh(path, root(), paths)
 
 
 def check_block_reason() -> str | None:
-    state_value = checks_result()
-    if state_value != "passed":
-        return state_value
-    if not artifact_is_fresh(checks_path(), changed_files()):
-        return "stale"
-    return None
+    return checks_check_block_reason(
+        checks_path=checks_path(),
+        changed_files_func=changed_files,
+        artifact_is_fresh_func=artifact_is_fresh,
+    )
 
 
 def current_branch() -> str:
-    r = run(["git", "branch", "--show-current"], timeout=15)
-    return r.stdout.strip() or "unknown"
+    return git_current_branch(run)
 
 
 def changed_files() -> list[str]:
-    r = run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], timeout=30)
-    if r.returncode != 0:
-        message = r.stderr.strip() or r.stdout.strip() or "git status failed."
-        raise RuntimeError(f"Could not inspect changed files: {message}")
-    files: list[str] = []
-    parts = r.stdout.split("\0")
-    i = 0
-    while i < len(parts):
-        entry = parts[i]
-        if not entry:
-            i += 1
-            continue
-        status = entry[:2]
-        path = entry[3:] if len(entry) > 3 else ""
-        if path:
-            files.append(path)
-        if "R" in status or "C" in status:
-            i += 1
-            if i < len(parts) and parts[i]:
-                files.append(parts[i])
-        i += 1
-    return sorted(set(files))
+    return git_changed_files(run)
 
 
 def untracked_files() -> list[str]:
-    r = run(["git", "ls-files", "--others", "--exclude-standard"], timeout=30)
-    if r.returncode != 0:
-        return []
-    return sorted(line for line in r.stdout.splitlines() if line.strip())
+    return git_untracked_files(run)
 
 
 def is_probably_text_file(path: Path, max_bytes: int = 20000) -> bool:
-    try:
-        if path.stat().st_size > max_bytes:
-            return False
-        sample = path.read_bytes()[:4096]
-    except OSError:
-        return False
-    return b"\x00" not in sample
+    return git_is_probably_text_file(path, max_bytes)
 
 
 def reviewed_untracked_text_contents(max_file_chars: int = 12000, max_total_chars: int = 50000) -> str:
-    sections: list[str] = []
-    total = 0
-    for rel in untracked_files():
-        path = root() / rel
-        if not path.is_file():
-            continue
-        if not is_probably_text_file(path):
-            block = f"### {rel}\n\n[skipped: binary or larger than 20KB]\n"
-        else:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            if len(text) > max_file_chars:
-                text = text[:max_file_chars] + "\n[truncated]\n"
-            block = f"### {rel}\n\n```text\n{text}\n```\n"
-        if total + len(block) > max_total_chars:
-            sections.append("[untracked file content truncated]\n")
-            break
-        sections.append(block)
-        total += len(block)
-    return "\n".join(sections).strip()
+    return git_reviewed_untracked_text_contents(root(), untracked_files(), max_file_chars, max_total_chars)
 
 
 def git_diff_for_fingerprint() -> str:
-    r = run(["git", "diff", "--", "."], timeout=30)
-    return r.stdout if r.returncode == 0 else r.stderr
+    return git_diff_for_fingerprint_impl(run)
 
 
 def active_issue_number() -> Any:
@@ -978,62 +576,48 @@ def active_issue_number() -> Any:
 
 
 def verify_fingerprint(check_commands: list[str]) -> str:
-    payload = {
-        "active_issue": active_issue_number(),
-        "branch": current_branch(),
-        "changed_files": changed_files(),
-        "untracked_files": untracked_files(),
-        "git_diff": git_diff_for_fingerprint(),
-        "untracked_text": reviewed_untracked_text_contents(),
-        "check_commands": check_commands,
-    }
-    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8", errors="replace")
-    return hashlib.sha256(encoded).hexdigest()
+    return verify_fingerprint_impl(
+        check_commands,
+        active_issue_number=active_issue_number(),
+        branch=current_branch(),
+        changed_files=changed_files(),
+        untracked_files=untracked_files(),
+        git_diff=git_diff_for_fingerprint(),
+        untracked_text=reviewed_untracked_text_contents(),
+    )
 
 
 def configured_check_commands(override: list[str] | None = None) -> list[str]:
-    if override:
-        return override
-    config = cfg()
-    checks = config.get("checks") or []
-    return [str(command) for command in checks]
+    return configured_check_commands_impl(cfg(), override)
 
 
 def write_verify_snapshot(check_commands: list[str], check_result: str) -> None:
-    snapshot = {
-        "version": 1,
-        "created_at": utc_now(),
-        "active_issue": active_issue_number(),
-        "branch": current_branch(),
-        "changed_files": changed_files(),
-        "untracked_files": untracked_files(),
-        "check_commands": check_commands,
-        "check_result": check_result,
-        "fingerprint": verify_fingerprint(check_commands),
-    }
-    write_json(verified_path(), snapshot)
+    write_verify_snapshot_impl(
+        verified_path(),
+        check_commands=check_commands,
+        check_result=check_result,
+        active_issue_number=active_issue_number(),
+        branch=current_branch(),
+        changed_files=changed_files(),
+        untracked_files=untracked_files(),
+        fingerprint=verify_fingerprint(check_commands),
+        created_at=utc_now(),
+    )
 
 
 def validate_verify_snapshot(*, check_commands: list[str]) -> tuple[bool, str]:
     snapshot = read_json(verified_path(), None)
-    if not isinstance(snapshot, dict) or snapshot.get("check_result") != "passed":
-        return False, "Error: no passing verify snapshot found. Run: rail v"
-    if snapshot.get("active_issue") != active_issue_number():
-        return False, "Error: active issue changed after last review. Run: rail v"
-    if snapshot.get("branch") != current_branch():
-        return False, "Error: branch changed after last review. Run: rail v"
-    if snapshot.get("check_commands") != check_commands:
-        return False, "Error: check config changed after last review. Run: rail v"
-    if snapshot.get("fingerprint") != verify_fingerprint(check_commands):
-        return False, "Error: files changed after last review. Run: rail v"
-    return True, "[rail] Verified snapshot is fresh."
+    return validate_verify_snapshot_impl(
+        snapshot,
+        check_commands=check_commands,
+        active_issue_number=active_issue_number(),
+        branch=current_branch(),
+        fingerprint=verify_fingerprint(check_commands),
+    )
 
 
 def refresh_review_and_check_artifacts() -> None:
-    now = dt.datetime.now().timestamp()
-    for path in (review_path(), checks_path()):
-        if path.exists():
-            os.utime(path, (now, now))
+    refresh_review_and_check_artifacts_impl(review_path(), checks_path())
 
 
 def latest_commit() -> str | None:
@@ -1074,150 +658,7 @@ def project_memory_has_placeholders() -> bool:
 
 
 def fetch_github_issues(repo: str, state_value: str, limit: int = 100) -> list[dict[str, Any]]:
-    gh = shutil.which("gh") or "gh"
-    result = subprocess.run(
-        [
-            gh, "issue", "list",
-            "--repo", repo,
-            "--state", state_value,
-            "--limit", str(limit),
-            "--json", "number,title,body,updatedAt,state",
-        ],
-        cwd=root(),
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        timeout=45,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "GitHub issue list failed.")
-    return json.loads(result.stdout or "[]")
-
-
-def roadmap_issue_from_open_issues(open_issues: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
-    roadmap = [item for item in open_issues if "roadmap:" in str(item.get("title", "")).lower()]
-    if not roadmap:
-        return None, False
-    roadmap = sorted(roadmap, key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
-    return roadmap[0], len(roadmap) > 1
-
-
-def extract_remote_memory(body: str) -> str | None:
-    if REMOTE_MEMORY_START not in body or REMOTE_MEMORY_END not in body:
-        return None
-    return body.split(REMOTE_MEMORY_START, 1)[1].split(REMOTE_MEMORY_END, 1)[0].strip()
-
-
-def render_managed_roadmap_from_issue(roadmap: dict[str, Any], open_issues: list[dict[str, Any]], closed_issues: list[dict[str, Any]]) -> str:
-    body = str(roadmap.get("body") or "").strip() or "_No roadmap body captured._"
-    open_impl = [item for item in open_issues if item.get("number") != roadmap.get("number")]
-    open_lines = "\n".join(f"- [ ] #{item.get('number')} {item.get('title')}" for item in open_impl) or "- None"
-    closed_lines = "\n".join(f"- [x] #{item.get('number')} {item.get('title')}" for item in closed_issues) or "- None"
-    next_issue = open_impl[0] if open_impl else None
-    next_line = f"#{next_issue.get('number')} {next_issue.get('title')}" if next_issue else "None"
-    return f"""## Roadmap
-
-Imported from GitHub roadmap issue #{roadmap.get('number')}: {roadmap.get('title')}
-
-## Roadmap issue body
-
-{body}
-
-## Active execution queue
-
-{open_lines}
-
-## Completed work
-
-{closed_lines}
-
-## Next recommended issue
-
-{next_line}
-"""
-
-
-def default_strict_roadmap_block() -> str:
-    return f"""{RAIL_ROADMAP_START}
-
-## Phase P1 - Foundation
-Status: active
-
-### Goal
-Roadmap needs a Rail-readable phase goal.
-
-### Completion criteria
-- Replace this fallback block via rail phase --copy and rail import.
-
-### Tasks
-- [ ] P1-T01 | TBD | Replace fallback roadmap with Rail-readable tasks
-
-{RAIL_ROADMAP_END}"""
-
-
-def extract_strict_roadmap_blocks(text: str) -> list[str]:
-    pattern = re.escape(RAIL_ROADMAP_START) + r".*?" + re.escape(RAIL_ROADMAP_END)
-    return re.findall(pattern, text, flags=re.DOTALL)
-
-
-def strict_roadmap_inner(text: str) -> str | None:
-    blocks = extract_strict_roadmap_blocks(text)
-    if len(blocks) != 1:
-        return None
-    block = blocks[0]
-    return block.split(RAIL_ROADMAP_START, 1)[1].split(RAIL_ROADMAP_END, 1)[0]
-
-
-def parse_roadmap_task_line(line: str) -> dict[str, str] | None:
-    stripped = line.strip()
-    match = RAIL_TASK_ID_FIRST_RE.match(stripped)
-    if not match:
-        match = RAIL_TASK_RE.match(stripped)
-    if not match:
-        return None
-    return {
-        "status": match.group("status"),
-        "issue": match.group("issue"),
-        "task_id": match.group("task_id"),
-        "title": match.group("title"),
-    }
-
-
-def active_phase_summary_from_text(text: str) -> dict[str, Any] | None:
-    inner = strict_roadmap_inner(text)
-    if inner is None:
-        return None
-    phases: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for line in inner.splitlines():
-        phase_match = RAIL_PHASE_RE.match(line.strip())
-        if phase_match:
-            current = {"phase": phase_match.group("phase"), "heading": line.strip().removeprefix("## Phase "), "status": None, "tasks": []}
-            phases.append(current)
-            continue
-        if current is None:
-            continue
-        stripped = line.strip()
-        if stripped.startswith("Status:"):
-            current["status"] = stripped.split(":", 1)[1].strip()
-            continue
-        task = parse_roadmap_task_line(line)
-        if task:
-            current["tasks"].append(task)
-    active_phase = next((phase for phase in phases if phase.get("status") == "active"), None)
-    if not active_phase:
-        return None
-    tasks = active_phase["tasks"]
-    completed = sum(1 for task in tasks if task["status"] == "x")
-    next_task = next((task for task in tasks if task["status"] == " "), None)
-    return {
-        "phase": active_phase["phase"],
-        "heading": active_phase["heading"],
-        "completed": completed,
-        "total": len(tasks),
-        "next_task": next_task,
-    }
+    return fetch_github_issues_impl(repo, state_value, run, limit=limit)
 
 
 def active_phase_summary() -> dict[str, Any] | None:
@@ -1258,136 +699,6 @@ def print_ship_phase_progress() -> None:
         rail_print(f"{rail_icon('tip')} Recommended next action: rail phase --copy \u2192 rail import \u2192 rail n")
 
 
-def ensure_strict_roadmap(managed: str) -> tuple[str, list[str]]:
-    warnings: list[str] = []
-    blocks = extract_strict_roadmap_blocks(managed)
-    if len(blocks) == 1:
-        return managed.strip(), warnings
-    if len(blocks) > 1:
-        first = blocks[0]
-        managed = re.sub(
-            re.escape(RAIL_ROADMAP_START) + r".*?" + re.escape(RAIL_ROADMAP_END),
-            lambda match: first if match.start() == managed.find(first) else "",
-            managed,
-            flags=re.DOTALL,
-        )
-        warnings.append("Imported roadmap had duplicate strict roadmap blocks; kept the first one.")
-        return managed.strip(), warnings
-    warnings.append("Imported roadmap is not Rail-readable. Run rail phase --copy, then rail import.")
-    return (managed.rstrip() + "\n\n" + default_strict_roadmap_block()).strip(), warnings
-
-
-def validate_rail_roadmap(text: str) -> list[str]:
-    warnings: list[str] = []
-    blocks = extract_strict_roadmap_blocks(text)
-    if not blocks:
-        return ["PROJECT.md roadmap is not Rail-readable. Run rail phase --copy, then rail import."]
-    if len(blocks) > 1:
-        warnings.append("PROJECT.md has duplicate AI RAIL ROADMAP blocks.")
-    inner = blocks[0].split(RAIL_ROADMAP_START, 1)[1].split(RAIL_ROADMAP_END, 1)[0]
-    task_ids: set[str] = set()
-    issues: set[str] = set()
-    saw_phase = False
-    current_phase: str | None = None
-    active_phases: list[str] = []
-    for line in inner.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        phase_match = RAIL_PHASE_RE.match(stripped)
-        if phase_match:
-            saw_phase = True
-            current_phase = phase_match.group("phase")
-            continue
-        if stripped.startswith("Status:"):
-            status = stripped.split(":", 1)[1].strip()
-            if status not in RAIL_PHASE_STATUSES:
-                warnings.append(f"PROJECT.md roadmap has invalid phase status `{status}`.")
-            elif status == "active" and current_phase:
-                active_phases.append(current_phase)
-            continue
-        if stripped.startswith("- ["):
-            task = parse_roadmap_task_line(stripped)
-            if not task:
-                warnings.append(f"PROJECT.md roadmap has malformed task line: {stripped}")
-                continue
-            task_id = task["task_id"]
-            issue = task["issue"]
-            if task_id in task_ids:
-                warnings.append(f"PROJECT.md roadmap has duplicate task ID `{task_id}`.")
-            task_ids.add(task_id)
-            if issue != "TBD":
-                if issue in issues:
-                    warnings.append(f"PROJECT.md roadmap has duplicate issue ref `{issue}`.")
-                issues.add(issue)
-    if not saw_phase:
-        warnings.append("PROJECT.md roadmap has no `## Phase Pn` sections.")
-    if len(active_phases) > 1:
-        warnings.append("PROJECT.md roadmap has multiple active phases: " + ", ".join(active_phases) + ".")
-    return warnings
-
-
-def project_memory_template(managed: str) -> str:
-    return f"""# Project Memory
-
-This file is the local AI Rail project memory and roadmap brain.
-
-GitHub Issues are the active task execution queue.
-The GitHub roadmap issue is the remote roadmap mirror.
-AI/planning agents create and update the roadmap.
-AI Rail imports roadmap memory and tracks completed issue state.
-
-{LOCAL_ROADMAP_START}
-
-{managed.strip()}
-
-{LOCAL_ROADMAP_END}
-
-## Roadmap maintenance rules
-
-- Keep the full roadmap here.
-- Keep only the active execution slice as GitHub implementation issues.
-- Do not create `.rail/ROADMAP.md`.
-- Do not use GitHub Issues for the entire 100-task roadmap.
-- Use `rail import` after `rail plan --copy` or `rail phase --copy`.
-- Use `rail s` to ship/close one issue and mark it completed locally.
-"""
-
-
-def is_placeholder_project_memory(text: str) -> bool:
-    if "CHANGE_ME" not in text:
-        return False
-    required = ["Product notes", "Stack", "Non-negotiables", "Roadmap maintenance rules"]
-    if not all(item in text for item in required):
-        return False
-    stripped = re.sub(r"<!-- AI RAIL MANAGED ROADMAP START -->.*?<!-- AI RAIL MANAGED ROADMAP END -->", "", text, flags=re.DOTALL)
-    defaults = [
-        "# Project Memory",
-        "This file is the local AI Rail project memory and roadmap brain.",
-        "GitHub Issues are the active task execution queue.",
-        "The GitHub roadmap issue is the remote roadmap mirror.",
-        "AI/planning agents create and update the roadmap.",
-        "AI Rail imports roadmap memory and tracks completed issue state.",
-        "## Product notes",
-        "CHANGE_ME: What does this project do?",
-        "## Stack",
-        "CHANGE_ME: Main technologies, framework, runtime, database, deployment target.",
-        "## Non-negotiables",
-        "CHANGE_ME: Constraints, architecture rules, safety rules, and things AI must not break.",
-        "## Roadmap maintenance rules",
-        "- Keep the full roadmap here.",
-        "- Keep only the active execution slice as GitHub implementation issues.",
-        "- Do not create `.rail/ROADMAP.md`.",
-        "- Do not use GitHub Issues for the entire 100-task roadmap.",
-        "- Use `rail import` after `rail plan --copy` or `rail phase --copy`.",
-        "- Use `rail s` to ship/close one issue and mark it completed locally.",
-    ]
-    remainder = stripped
-    for item in defaults:
-        remainder = remainder.replace(item, "")
-    return not remainder.strip()
-
-
 def backup_project_memory_before_replacement(path: Path) -> None:
     if not path.exists() or not path.is_file():
         return
@@ -1422,11 +733,6 @@ def update_local_project_memory(managed: str) -> None:
 def print_no_matching_roadmap_task(issue_number: Any) -> None:
     rail_print(f"{rail_icon('warning')} No matching roadmap task found for issue #{issue_number}.")
     rail_print(f"{rail_icon('info')} PROJECT.md was left unchanged.")
-
-
-def roadmap_task_id_mentions(title: str | None, body: str | None) -> set[str]:
-    text = f"{title or ''}\n{body or ''}"
-    return set(re.findall(RAIL_TASK_ID_PATTERN, text))
 
 
 def mark_project_issue_completed(issue_number: Any, title: str | None = None, body: str | None = None) -> bool:
@@ -1500,94 +806,6 @@ def cmd_start(argv: list[str]) -> int:
         else:
             print("Next: use AI-direct GitHub workflow, then fetch/pull locally")
     return rc
-
-
-def prepare_default_branch_ref(default_branch: str) -> tuple[bool, str]:
-    if git_ref_exists(default_branch):
-        return True, default_branch
-    remote_ref = f"origin/{default_branch}"
-    if git_ref_exists(remote_ref):
-        return True, remote_ref
-    if branch_exists_remotely(default_branch):
-        fetch = run(["git", "fetch", "origin", default_branch], timeout=120)
-        if fetch.returncode != 0:
-            print(fetch.stderr.strip() or fetch.stdout.strip())
-            return False, remote_ref
-        if git_ref_exists(remote_ref):
-            return True, remote_ref
-    return False, remote_ref
-
-
-def checkout_default_branch(default_branch: str, source_ref: str) -> int:
-    if git_ref_exists(default_branch):
-        checkout = run(["git", "checkout", default_branch], timeout=120)
-    else:
-        checkout = run(["git", "checkout", "-b", default_branch, source_ref], timeout=120)
-    if checkout.returncode != 0:
-        print(checkout.stderr.strip() or checkout.stdout.strip())
-        return checkout.returncode or 1
-    if checkout.stdout.strip() or checkout.stderr.strip():
-        print(checkout.stdout.strip() or checkout.stderr.strip())
-    return 0
-
-
-def integrate_issue_branch_into_default(issue_branch: str, *, push: bool) -> int:
-    if not shutil.which("git"):
-        rail_print(f"{rail_icon('error')} git is required to integrate the issue branch into the default branch.")
-        return 1
-    if not issue_branch or issue_branch == "unknown":
-        rail_print(f"{rail_icon('error')} Could not detect the issue branch. Issue was not closed.")
-        return 1
-
-    default_branch = configured_default_branch()
-    exists, source_ref = prepare_default_branch_ref(default_branch)
-    if not exists:
-        rail_print(f"{rail_icon('warning')} Ship paused: configured default branch `{default_branch}` was not found.")
-        rail_print(f"{rail_icon('info')} Issue was not closed and active state was kept.")
-        return 1
-
-    if not rail_runtime_tracked_on_branch(source_ref):
-        print_rail_untracked_pause()
-        return 1
-
-    rail_print(f"{rail_icon('info')} Integrating `{issue_branch}` into `{default_branch}`...")
-    rc = checkout_default_branch(default_branch, source_ref)
-    if rc != 0:
-        rail_print(f"{rail_icon('warning')} Ship paused before issue close; default branch checkout failed.")
-        return rc
-
-    pull = run(["git", "pull", "--ff-only", "origin", default_branch], timeout=120)
-    if pull.returncode != 0:
-        print(pull.stderr.strip() or pull.stdout.strip())
-        rail_print(f"{rail_icon('warning')} Ship paused before issue close; default branch pull failed.")
-        return pull.returncode or 1
-    if pull.stdout.strip() or pull.stderr.strip():
-        print(pull.stdout.strip() or pull.stderr.strip())
-
-    merge = run(["git", "merge", "--no-ff", issue_branch, "-m", f"Merge {issue_branch}"], timeout=120)
-    if merge.returncode != 0:
-        print(merge.stderr.strip() or merge.stdout.strip())
-        print_merge_conflict_pause(issue_branch, default_branch, issue_branch_pushed=push)
-        return merge.returncode or 1
-    if merge.stdout.strip() or merge.stderr.strip():
-        print(merge.stdout.strip() or merge.stderr.strip())
-
-    if not local_py().exists():
-        rail_print(f"{rail_icon('warning')} Ship paused: .rail/rail.py is missing after merge. Issue was not closed.")
-        return 1
-
-    if push:
-        push_result = run(["git", "push", "origin", default_branch], timeout=120)
-        if push_result.returncode != 0:
-            print(push_result.stderr.strip() or push_result.stdout.strip())
-            rail_print(f"{rail_icon('warning')} Ship paused before issue close; default branch push failed.")
-            return push_result.returncode or 1
-        print(push_result.stdout.strip() or push_result.stderr.strip() or f"Pushed {default_branch}.")
-    else:
-        rail_print(f"{rail_icon('warning')} --no-push used; default branch merge was not pushed.")
-
-    return 0
-
 
 
 def cmd_next(argv: list[str]) -> int:
@@ -1664,7 +882,7 @@ def cmd_import(argv: list[str]) -> int:
     if not rail_dir().exists():
         print("No .rail folder found. Run: rail init", file=sys.stderr)
         return 1
-    if not shutil.which("gh"):
+    if not gh_available():
         print("GitHub CLI `gh` is required for rail import.", file=sys.stderr)
         return 1
     repo = detected_repository_for_github()
@@ -1767,180 +985,39 @@ def cmd_ship(argv: list[str]) -> int:
     parser.add_argument("--no-merge", action="store_true", help="Advanced/manual: do not merge the issue branch into the default branch.")
     parser.add_argument("--keep-active", action="store_true", help="Keep active issue when running done.")
     ns = parser.parse_args(argv)
-    active_before_ship = active()
-    project_path = rail_dir() / "PROJECT.md"
-    project_memory_before_ship: str | None = None
-    project_memory_existed_before_ship = project_path.exists()
-    if project_memory_existed_before_ship and project_path.is_file():
-        project_memory_before_ship = project_path.read_text(encoding="utf-8", errors="replace")
-
-    def run_ship_checks(configured_checks: list[str], reason: str) -> int:
-        if reason == "--recheck requested":
-            rail_print(f"{rail_icon('info')} --recheck requested. Running checks now...")
-        else:
-            rail_print(f"{rail_icon('info')} Last checks are {reason}. Running checks now...")
-        checks_rc = delegate(["checks"], stream=True)
-        if checks_rc != 0:
-            config = cfg()
-            configured_values = config.get("checks") or []
-            check_output = checks_path().read_text(encoding="utf-8", errors="replace") if checks_path().exists() else ""
-            recovery = missing_npm_check_recovery(configured_values, check_output)
-            if recovery:
-                failed_command, replacement = recovery
-                print(f"[rail] Configured check `{failed_command}` is not available.")
-                print(f"[rail] Found available project check: `{replacement}`.")
-                print("[rail] Running replacement check now...")
-                checks_rc = delegate(["checks", replacement], stream=True)
-                if checks_rc == 0 and can_update_stale_default_node_check(configured_values, failed_command, replacement):
-                    config["checks"] = [replacement]
-                    write_json(rail_dir() / "config.json", config)
-                    print(f"[rail] Updated .rail/config.json checks to `{replacement}`.")
-            elif configured_values:
-                missing_npm_commands = [
-                    command for command in configured_values
-                    if isinstance(command, str)
-                    and (script := npm_run_script(command))
-                    and script not in package_json_scripts()
-                    and check_output_mentions_missing_npm_script(check_output, script)
-                ]
-                if missing_npm_commands and package_json_scripts():
-                    print(f"[rail] Configured check `{missing_npm_commands[0]}` is not available.")
-                    print("[rail] No usable npm check script was found in package.json.")
-
-            if checks_rc != 0:
-                rail_print(f"{rail_icon('error')} Checks still failed. Ship stopped.")
-                rail_print(f"{rail_icon('tip')} Fix checks and rerun `rail ship`, or use `--force` only if you intentionally accept the risk.")
-                return checks_rc or 1
-        rail_print(f"{rail_icon('success')} Checks passed. Continuing ship.")
-        write_verify_snapshot(configured_check_commands(), checks_result())
-        refresh_review_and_check_artifacts()
-        return 0
-
-    if not ns.force:
-        check_commands = configured_check_commands()
-        verified, verify_message = validate_verify_snapshot(check_commands=check_commands)
-        if verified:
-            print(verify_message)
-            if ns.recheck:
-                rc = run_ship_checks(check_commands, "--recheck requested")
-                if rc != 0:
-                    return rc
-            else:
-                rail_print(f"{rail_icon('success')} Checks already passed in last verify. Skipping recheck.")
-        else:
-            reason = check_block_reason()
-            explicit_check_bypass = (
-                (reason in {"missing", "unknown"} and ns.allow_missing_checks)
-                or (reason == "stale" and ns.allow_stale)
-            )
-            if explicit_check_bypass:
-                pass
-            else:
-                can_use_legacy_recovery = (
-                    reason is not None
-                    and (not verified_path().exists() or ns.recheck)
-                )
-                if can_use_legacy_recovery:
-                    rc = run_ship_checks(check_commands, reason)
-                    if rc != 0:
-                        return rc
-                else:
-                    print(verify_message)
-                    return 1
-
-    if active_before_ship:
-        issue = active_before_ship.get("issue", {})
-        try:
-            rail_print(f"{rail_icon('info')} Updating .rail/PROJECT.md for completed issue #{issue.get('number')}.")
-            updated = mark_project_issue_completed(issue.get("number"), issue.get("title"), issue.get("body"))
-            if updated:
-                rail_print(f"{rail_icon('success')} Updated .rail/PROJECT.md for completed issue; it will be included in the ship commit.")
-                refresh_review_and_check_artifacts()
-        except Exception as exc:
-            rail_print(f"{rail_icon('warning')} Could not update .rail/PROJECT.md before ship: {exc}")
-            rail_print(f"{rail_icon('tip')} Recovery: mark the completed issue in .rail/PROJECT.md manually.")
-
-    commit_args = ["commit", ns.message]
-    append_flag(commit_args, ns.no_push, "--no-push")
-    append_flag(commit_args, ns.amend, "--amend")
-    append_flag(commit_args, ns.force, "--force")
-    append_flag(commit_args, ns.allow_missing_checks, "--allow-missing-checks")
-    append_flag(commit_args, ns.allow_stale, "--allow-stale")
-
-    rail_print(f"{rail_icon('info')} Committing...")
-    head_before_commit = run(["git", "rev-parse", "HEAD"], timeout=15)
-    head_before = head_before_commit.stdout.strip() if head_before_commit.returncode == 0 else None
-    rc = delegate(commit_args, extra_env={"AI_RAIL_SUPPRESS_COMMIT_NEXT": "1"})
-    if rc != 0:
-        if active_before_ship:
-            try:
-                if project_memory_existed_before_ship:
-                    if project_memory_before_ship is not None:
-                        project_path.write_text(project_memory_before_ship, encoding="utf-8")
-                elif project_path.exists():
-                    if project_path.is_file():
-                        project_path.unlink()
-                print("[rail] Restored .rail/PROJECT.md because ship commit failed.")
-            except Exception as exc:
-                print(f"[rail] Warning: could not restore .rail/PROJECT.md after ship commit failed: {exc}")
-        rail_print(f"{rail_icon('error')} Ship stopped during commit; no later ship steps ran.")
-        return rc
-    head_after_commit = run(["git", "rev-parse", "HEAD"], timeout=15)
-    head_after = head_after_commit.stdout.strip() if head_after_commit.returncode == 0 else None
-    if head_before and head_after and head_before == head_after:
-        rail_print(f"{rail_icon('warning')} No new commit was created, so ship is paused.")
-        rail_print(f"{rail_icon('info')} Issue was not closed, and active state was kept.")
-        return 1
-
-    issue_branch = current_branch()
-    if ns.no_sync:
-        default_branch = cfg().get("default_branch", "main")
-        rail_print(f"{rail_icon('warning')} Ship paused: --no-sync prevented default-branch integration.")
-        rail_print(f"{rail_icon('info')} Issue branch `{issue_branch}` was committed, but the issue was not closed and active state was kept.")
-        rail_print(f"{rail_icon('tip')} Next: merge and push `{issue_branch}` into `{default_branch}`, then run `rail issue-close --commit && rail done && rail sync`.")
-        return 1
-    if ns.no_merge:
-        print_no_merge_warning()
-        rail_print(f"{rail_icon('info')} Issue was not closed, and active state was kept.")
-        rail_print(f"{rail_icon('tip')} Next: merge and push `{issue_branch}` into the default branch before closing or marking done.")
-        return 1
-    else:
-        default_branch = cfg().get("default_branch", "main")
-        if issue_branch == default_branch:
-            rail_print(f"{rail_icon('error')} Ship expects an issue branch, but you are already on the default branch `{default_branch}`.")
-            rail_print(f"{rail_icon('info')} Issue was not closed, and active state was kept.")
-            return 1
-        rc = integrate_issue_branch_into_default(issue_branch, push=not ns.no_push)
-        if rc != 0:
-            return rc
-        if ns.no_push:
-            rail_print(f"{rail_icon('warning')} Default branch was merged locally but not pushed.")
-            rail_print(f"{rail_icon('info')} Issue was not closed, and active state was kept.")
-            rail_print(f"{rail_icon('tip')} Next: inspect `{default_branch}`, push it with `git push origin {default_branch}`, then run `rail issue-close --commit && rail done && rail sync`.")
-            return 1
-
-    if not ns.no_close:
-        rc = delegate(["issue-close", "--commit"])
-        if rc != 0:
-            rail_print(f"{rail_icon('warning')} Ship stopped after commit succeeded; issue close failed.")
-            rail_print(f"{rail_icon('info')} Active state was kept.")
-            rail_print(f"{rail_icon('tip')} Recovery: manually close the GitHub issue or fix `gh auth login`, then run: rail done && rail sync")
-            return rc
-
-    if not ns.no_done:
-        done_args: list[str] = []
-        append_flag(done_args, ns.keep_active, "--keep-active")
-        append_flag(done_args, ns.force, "--force")
-        rc = cmd_done(done_args)
-        if rc != 0:
-            rail_print(f"{rail_icon('warning')} Ship stopped after commit and issue-close succeeded; done failed.")
-            return rc
-
-    print_ship_phase_progress()
-    rail_print(f"{rail_icon('success')} Ship complete.")
-    rail_print(f"{rail_icon('tip')} Recommended next action: rail phase --copy")
-    return 0
-
+    return run_ship(ns, ShipContext(
+        active=active,
+        append_flag=append_flag,
+        branch_exists_remotely=branch_exists_remotely,
+        can_update_stale_default_node_check=can_update_stale_default_node_check,
+        cfg=cfg,
+        check_block_reason=check_block_reason,
+        check_output_mentions_missing_npm_script=check_output_mentions_missing_npm_script,
+        checks_path=checks_path,
+        checks_result=checks_result,
+        cmd_done=cmd_done,
+        configured_check_commands=configured_check_commands,
+        configured_default_branch=configured_default_branch,
+        current_branch=current_branch,
+        delegate=delegate,
+        git_ref_exists=git_ref_exists,
+        local_py=local_py,
+        mark_project_issue_completed=mark_project_issue_completed,
+        missing_npm_check_recovery=missing_npm_check_recovery,
+        npm_run_script=npm_run_script,
+        package_json_scripts=package_json_scripts,
+        print_ship_phase_progress=print_ship_phase_progress,
+        rail_dir=rail_dir,
+        rail_icon=rail_icon,
+        rail_print=rail_print,
+        rail_runtime_tracked_on_branch=rail_runtime_tracked_on_branch,
+        refresh_review_and_check_artifacts=refresh_review_and_check_artifacts,
+        run=run,
+        validate_verify_snapshot=validate_verify_snapshot,
+        verified_path=verified_path,
+        write_json=write_json,
+        write_verify_snapshot=write_verify_snapshot,
+    ))
 def cmd_prompt(argv: list[str]) -> int:
     if argv and argv[0] == "codex":
         model = active_model()
@@ -1957,294 +1034,28 @@ def cmd_prompt(argv: list[str]) -> int:
 
 def render_plan_prompt() -> str:
     project_name, repository = planning_identity()
-    return f"""You are a GitHub-connected planning agent for this repository.
-
-Project: {project_name}
-Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
-
-Audit the repo enough to understand:
-- project purpose
-- tech stack
-- current features
-- missing backend/backbone/configuration
-- fake UI or unimplemented controls
-- risky/broken areas
-- what should be done first
-
-Create or update one GitHub roadmap issue as the remote roadmap mirror, titled:
-Roadmap: {project_name} functional MVP
-
-Put the full roadmap/project memory inside the roadmap issue body. Include this exact managed block:
-
-{REMOTE_MEMORY_START}
-...
-{REMOTE_MEMORY_END}
-
-The managed block should be complete enough to become the useful body of local `.rail/PROJECT.md` after `rail import`.
-Do not include `CHANGE_ME`.
-Do not duplicate default placeholder sections.
-If updating an existing roadmap issue, replace the old managed block instead of appending another one.
-If old roadmap content exists outside the managed block, update it only if needed; do not create duplicate roadmap sections.
-
-Inside the managed block, include exactly one strict Rail-readable roadmap block:
-
-{RAIL_ROADMAP_START}
-
-## Phase P1 - Foundation / truth alignment
-Status: active
-
-### Goal
-Plain text phase goal.
-
-### Completion criteria
-- Plain text criterion.
-
-### Tasks
-- [ ] P1-T01 | #123 | Existing active issue title
-- [ ] P1-T02 | TBD | Future task title
-
-{RAIL_ROADMAP_END}
-
-Strict roadmap rules:
-- Every task line must use exactly one of these forms:
-  `- [ ] TASK_ID | ISSUE | TITLE`
-  `- [x] TASK_ID | ISSUE | TITLE`
-- `TASK_ID` must look like `P1-T01`, `P2-T03`, and be unique.
-- `ISSUE` must be `#N` for GitHub issues that exist or `TBD` for future tasks not yet created.
-- Legacy issue-first task lines are still accepted by Rail, but new roadmap text should use task-id-first.
-- Phase `Status:` must be one of `planned`, `active`, `complete`, or `blocked`.
-- Use checkboxes for every task.
-- Do not use numbered lists for task status inside the strict block.
-- Do not duplicate task status elsewhere as a second source of truth.
-- Do not append duplicate roadmap blocks; replace/update the existing block.
-
-AI RAIL PROJECT MEMORY contains human-readable project context:
-- product summary
-- stack
-- non-negotiables
-- current state
-- target state
-- blockers/postponed items
-- completed work summary
-- next recommended issue/task
-- workflow notes
-
-AI RAIL ROADMAP contains only Rail-readable phase/task state:
-- phase headings
-- Status
-- Goal
-- Completion criteria
-- Tasks
-- strict task lines
-
-Do not put product summary, stack, non-negotiables, current state, target state, blockers, completed-work prose, workflow notes, or next-step prose inside AI RAIL ROADMAP.
-Do not duplicate task status outside AI RAIL ROADMAP.
-
-Inside the strict roadmap block, include:
-- full phased roadmap
-- phase goals
-- completion criteria
-- future tasks/backlog
-- current phase
-- active execution queue
-
-AI Rail treats `.rail/PROJECT.md` as the local project memory and roadmap brain, but you should update the GitHub roadmap issue first. Do not edit `.rail/PROJECT.md` remotely unless the user explicitly asks.
-
-Structure the roadmap into phases. Example phase styles:
-- Phase 1 - Foundation / cleanup / truth alignment
-- Phase 2 - Core functionality
-- Phase 3 - UI/backbone connection
-- Phase 4 - safety/polish/release readiness
-
-Do not force those exact phase names; choose phases that fit this repo.
-
-Create all issues for the first active execution slice/current phase as implementation-ready GitHub Issues:
-- usually 3-10 right-sized implementation issues
-- do not stop after creating one issue unless the phase truly has one task or GitHub/API failure blocks more
-- do not create GitHub issues for the entire long-term roadmap
-- assign `#N` issue refs in the strict roadmap block for issues you create
-- keep future tasks as `Pn-Txx | TBD | title`
-- small enough for one focused coding-agent pass
-- big enough to be meaningful
-- not tiny/noisy micro-tasks
-- not huge phase-sized tasks
-- ordered safest/foundation-first
-- each issue should produce a clear diff
-- avoid vague issues like "improve UI" or "refactor app"
-- prefer backbone/config/foundation fixes before polish
-- if GitHub blocks long issue bodies, create shorter issue bodies but still create issue shells and insert `#N` refs
-- if not all active-slice issues are created, list which tasks remain `TBD` and why
-
-Each implementation issue must include this body template:
-
-## Goal
-
-## Current problem
-
-## Scope
-
-## Out of scope
-
-## Files likely touched
-
-## Acceptance checks
-
-## AI/Codex rules
-
-- Keep scope small.
-- Touch only necessary files.
-- Do not commit.
-- Do not close the issue.
-- Do not run tests/checks by default.
-- Do not run full suites like npm test, npm run build, or broad integration tests.
-- Only run a tiny focused check if there is truly no safe way to finish the task without it.
-- If you skip checks, say exactly: "Checks not run; human will run rail v."
-- Stop and explain if this requires broader architecture changes.
-
-Task-writing rules:
-- One issue should fit one focused coding-agent session.
-- Each issue should usually touch a small set of related files.
-- Each issue should have enough detail that `rail n` can pass it to a coding agent without re-explaining the project.
-- Do not create tiny noisy micro-tasks.
-- Do not create huge phase-sized tasks.
-- Do not bundle unrelated UI, backend, docs, and config changes into one issue.
-- If a phase is large, split it into several scoped issues.
-- If the coding agent would need to make architecture decisions, create a planning/audit issue first instead of a coding issue.
-
-Do not:
-- implement code
-- make commits
-- open PRs
-- create GitHub issues for the entire future roadmap
-- create vague or huge issues
-
-After I create/update the roadmap issue and active execution issues, run `rail import` locally.
-AI Rail will import the roadmap issue into local `.rail/PROJECT.md`.
-Do not edit `.rail/PROJECT.md` remotely unless the user explicitly asks.
-
-After import, the human will run:
-
-rail n
-# paste generated prompt into coding agent
-
-rail v
-# paste review prompt into AI reviewer
-
-rail s "type(scope): message"
-
-Implementation happens through the one-issue-at-a-time AI Rail loop."""
+    return render_plan_prompt_text(
+        project_name=project_name,
+        repository=repository,
+        remote_memory_start=REMOTE_MEMORY_START,
+        remote_memory_end=REMOTE_MEMORY_END,
+        rail_roadmap_start=RAIL_ROADMAP_START,
+        rail_roadmap_end=RAIL_ROADMAP_END,
+    )
 
 
 def render_phase_prompt() -> str:
     project_name, repository = planning_identity()
     history = "\n".join(recent_history_lines(8))
-    return f"""You are a GitHub-connected phase-audit agent for this repository.
-
-Project: {project_name}
-Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
-
-Inspect the repo and GitHub Issues. Find the roadmap issue, usually titled like:
-Roadmap: {project_name} functional MVP
-
-Update the GitHub roadmap issue. Update the managed project-memory block inside the roadmap issue:
-
-{REMOTE_MEMORY_START}
-...
-{REMOTE_MEMORY_END}
-
-Replace/update the existing managed block. Do not append duplicate managed blocks.
-Do not leave stale phase/task sections.
-Do not include `CHANGE_ME`.
-Inside it, preserve and update exactly one strict `{RAIL_ROADMAP_START}` / `{RAIL_ROADMAP_END}` block.
-Every task line in that block must stay exactly one of these forms:
-`- [ ] TASK_ID | ISSUE | TITLE`
-`- [x] TASK_ID | ISSUE | TITLE`
-Use `#N` for existing GitHub issues and `TBD` for future tasks not yet created.
-Legacy issue-first task lines are still accepted by Rail, but new roadmap text should use task-id-first.
-Use phase statuses only from: planned, active, complete, blocked.
-Do not use numbered lists for task status.
-Do not invent alternate task structures.
-
-AI RAIL PROJECT MEMORY contains human-readable project context: product summary, stack, non-negotiables, current state, target state, blockers/postponed items, completed work summary, next recommended issue/task, and workflow notes.
-AI RAIL ROADMAP contains only Rail-readable phase/task state: phase headings, Status, Goal, Completion criteria, Tasks, and strict task lines.
-Do not put product summary, stack, non-negotiables, current state, target state, blockers, completed-work prose, workflow notes, or next-step prose inside AI RAIL ROADMAP.
-Do not duplicate task status outside AI RAIL ROADMAP.
-
-AI Rail will import that roadmap issue into local `.rail/PROJECT.md`; do not edit `.rail/PROJECT.md` remotely unless explicitly asked.
-
-Identify:
-- current phase
-- completed/closed issues in that phase
-- open issues in that phase
-- shipped work since the last phase audit
-
-Recent AI Rail history, if available:
-{history}
-
-Audit whether the phase is really complete. Check for:
-- whether completed issues really satisfy the phase completion criteria
-- scope drift
-- incomplete tasks
-- broken assumptions
-- missing tests/checks
-- docs mismatch
-- fake UI still not backed
-- risky shortcuts
-- roadmap mismatch
-
-If the phase is complete:
-- mark completed task lines as `[x]` in the strict roadmap block
-- update phase `Status:` lines in the strict roadmap block
-- update completed work, current phase, next recommended issue, and blockers/postponed work in the roadmap issue memory block
-- mark or recommend the phase as complete in the GitHub roadmap issue
-- recommend or create all issues for the next active execution slice/current phase
-- usually create 3-10 right-sized implementation issues
-- do not stop after creating one issue unless the slice truly has one task or GitHub/API failure blocks more
-- keep new issues right-sized for coding agents
-
-If the phase is not complete:
-- list remaining blockers
-- create or update only scoped blocker issues
-- replace `TBD` with issue numbers when you create all issues for the next active execution slice/current phase
-- add future tasks only as `- [ ] Pn-Txx | TBD | title`
-- do not start the next phase yet
-- if GitHub blocks long issue bodies, create shorter issue bodies but still create issue shells and insert `#N` refs
-- if not all active-slice issues are created, list which tasks remain `TBD` and why
-
-Review upcoming phases and decide whether the roadmap is still correct. If it is off-track, update upcoming phases in the GitHub roadmap issue, then clearly tell the user what changed and why.
-
-Right-sized issue rules:
-- one focused coding session
-- clear diff
-- not a micro-task
-- not a giant phase-sized task
-- no unrelated bundles
-- enough detail for `rail next --copy`
-
-Do not:
-- implement code
-- commit
-- open PRs
-- close roadmap phases unless the audit supports it
-- silently create unrelated tasks
-- create issues for the entire future roadmap
-- edit `.rail/PROJECT.md` remotely unless explicitly asked
-
-Implementation still happens one issue at a time through:
-
-rail n -> coding agent -> rail v -> reviewer -> rail s
-
-After I update the roadmap issue and active execution issues, run `rail import` locally.
-AI Rail will import the updated roadmap issue into local `.rail/PROJECT.md`.
-
-Return:
-- phase audit verdict
-- completed issue list
-- remaining blockers
-- roadmap updates made or recommended
-- next phase recommendation
-- next issue to run with AI Rail"""
-
+    return render_phase_prompt_text(
+        project_name=project_name,
+        repository=repository,
+        history=history,
+        remote_memory_start=REMOTE_MEMORY_START,
+        remote_memory_end=REMOTE_MEMORY_END,
+        rail_roadmap_start=RAIL_ROADMAP_START,
+        rail_roadmap_end=RAIL_ROADMAP_END,
+    )
 
 def cmd_plan(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="rail plan")
@@ -2423,10 +1234,7 @@ def copy_to_clipboard(text: str) -> bool:
 
 
 def git_status_porcelain() -> str:
-    result = run(["git", "status", "--short"], timeout=30)
-    if result.returncode != 0:
-        return "git status unavailable"
-    return result.stdout.strip() or "clean"
+    return git_status_porcelain_impl(run)
 
 
 def cfg() -> dict[str, Any]:
@@ -2463,698 +1271,97 @@ def recent_history_lines(max_history: int = 5) -> list[str]:
     return lines
 
 
+def brain_context() -> BrainContext:
+    return BrainContext(
+        active_issue_summary=active_issue_summary,
+        brain_dir=brain_dir,
+        cfg=cfg,
+        changed_files=changed_files,
+        checks_path=checks_path,
+        checks_result=checks_result,
+        configured_repository=lambda config: configured_repository(config, detect_repo_from_tools),
+        copy_to_clipboard=copy_to_clipboard,
+        current_branch=current_branch,
+        git_status_porcelain=git_status_porcelain,
+        handoff_state_path=handoff_state_path,
+        next_backup_path=next_backup_path,
+        rail_dir=rail_dir,
+        recent_history_lines=recent_history_lines,
+        review_path=review_path,
+        root=root,
+        safe_read_text=safe_read_text,
+        print_text=print_utf8_text,
+        utc_now=utc_now,
+        version=VERSION,
+    )
+
+
 def render_project_brain(max_history: int = 5) -> dict[str, str]:
-    config = cfg()
-    active_issue = active_issue_summary()
-    checks = checks_result()
-    status = git_status_porcelain()
-    files = changed_files()
-
-    project_name = config.get("project_name") or root().name
-    repository = configured_repository(config)
-    check_commands = config.get("checks") or []
-
-    project = f"""# Project
-
-- Name: {project_name}
-- Repository: {repository}
-- Root: {root()}
-- AI Rail version: {VERSION}
-
-## Purpose
-
-This repo uses AI Rail as a local-first project brain and workflow rail for AI-assisted development.
-
-## Configured checks
-{chr(10).join(f"- `{cmd}`" for cmd in check_commands) if check_commands else "- No checks configured."}
-"""
-
-    if active_issue.get("number"):
-        current = f"""# Current Task
-
-- Issue: #{active_issue.get('number')} — {active_issue.get('title')}
-- URL: {active_issue.get('url') or '-'}
-- Active model: {active_issue.get('interaction_model')}
-- Branch: {active_issue.get('branch')}
-- Started: {active_issue.get('started_at') or '-'}
-
-## Issue body
-
-{active_issue.get('body') or '_No issue body captured._'}
-"""
-    else:
-        current = "# Current Task\n\nNo active AI Rail issue. Use `rail next` or `rail start ISSUE`.\n"
-
-    status_doc = f"""# Status
-
-- Generated: {utc_now()}
-- Branch: {current_branch()}
-- Checks result: {checks}
-- Git status: {status}
-
-## Changed files
-{chr(10).join(f"- {path}" for path in files) if files else "- None"}
-"""
-
-    history = "# Recent History\n\n" + "\n".join(recent_history_lines(max_history)) + "\n"
-
-    handoff = f"""# Handoff Summary
-
-Generated by `rail snapshot` at {utc_now()}.
-
-## Where we are
-
-- Project: {project_name}
-- Branch: {current_branch()}
-- Active issue: {('#' + str(active_issue.get('number')) + ' — ' + str(active_issue.get('title'))) if active_issue.get('number') else 'none'}
-- Active model: {active_issue.get('interaction_model')}
-- Checks: {checks}
-- Dirty files: {len(files)}
-
-## Next safe action
-
-{next_safe_action(checks, bool(active_issue.get('number')), files)}
-"""
-
-    return {
-        "PROJECT.md": project,
-        "CURRENT_TASK.md": current,
-        "STATUS.md": status_doc,
-        "RECENT_HISTORY.md": history,
-        "HANDOFF.md": handoff,
-    }
-
-
-def next_safe_action(checks: str, has_active: bool, files: list[str]) -> str:
-    if not has_active:
-        return "Start the next task with `rail next`."
-    if files and checks != "passed":
-        return "Run `rail verify` before shipping."
-    if files and checks == "passed":
-        return "Ask an AI reviewer to inspect the handoff/review, then run `rail ship \"type(scope): message\"` when approved."
-    return "Continue the active task or run `rail verify` if implementation is complete."
+    return brain_render_project_brain(brain_context(), max_history=max_history)
 
 
 def cmd_snapshot(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail snapshot")
-    parser.add_argument("--max-history", type=int, default=5)
-    parser.add_argument("--quiet", action="store_true")
-    ns = parser.parse_args(argv)
-
-    if not rail_dir().exists():
-        print("No .rail folder found. Run: rail init", file=sys.stderr)
-        return 1
-
-    docs = render_project_brain(max_history=ns.max_history)
-    brain_dir().mkdir(parents=True, exist_ok=True)
-    for name, content in docs.items():
-        (brain_dir() / name).write_text(content, encoding="utf-8")
-
-    if not ns.quiet:
-        print("Updated AI Rail project brain:")
-        for name in docs:
-            print(f"- .rail/brain/{name}")
-    return 0
-
-
-def target_instructions(target: str) -> str:
-    common = """Use this handoff as the source of truth for the current state. Do not assume missing context. Keep scope small, work only on the active issue or requested task, and ask for clarification only when the handoff is insufficient to continue safely."""
-    by_target = {
-        "generic": "Continue from this project state. Summarize your understanding first, then work only on the requested next step.",
-        "chatgpt": "You are the reviewer/planner. Identify drift, check changed files against issue scope, check focused checks, decide whether ship is safe, and give exact next commands. Do not claim you ran commands unless evidence is included.",
-        "codex": "You are the coding agent. Implement only the active issue. Read AGENTS.md and the AI Rail brain first. Do not commit, push, close issues, create roadmaps, or run broad/full tests unless explicitly asked.",
-        "claude": "You are the coding agent/reviewer. Use the project brain and active task as authoritative context. Keep edits narrow, avoid broad refactors, and report changed files, focused checks, and risks.",
-        "cursor": "Use the project brain as repo rules/context. Keep edits scoped to the active issue, avoid broad refactors, and do not run broad/full tests unless explicitly asked.",
-        "aider": "Use this as the task brief. Edit only files relevant to the active issue, keep diffs small, run only focused requested checks, and leave commit/review/ship to AI Rail.",
-    }
-    return common + "\n\n" + by_target.get(target, by_target["generic"])
+    return brain_cmd_snapshot(argv, brain_context())
 
 
 def render_handoff(target: str, max_history: int = 5, include_review: bool = False, include_checks: bool = False, max_section_chars: int = 12000) -> str:
-    docs = render_project_brain(max_history=max_history)
-    active_issue = active_issue_summary()
-    files = changed_files()
-    parts = [
-        f"# AI Rail Handoff — {target}\n",
-        f"Generated: {utc_now()}\n",
-        "## Instruction for the next AI session\n\n" + target_instructions(target) + "\n",
-        "## Quick state\n",
-        f"- Branch: {current_branch()}",
-        f"- Active issue: {('#' + str(active_issue.get('number')) + ' — ' + str(active_issue.get('title'))) if active_issue.get('number') else 'none'}",
-        f"- Active model: {active_issue.get('interaction_model')}",
-        f"- Checks result: {checks_result()}",
-        f"- Changed files: {len(files)}",
-        "",
-        "## Project brain\n",
-    ]
-    for name in ["PROJECT.md", "CURRENT_TASK.md", "STATUS.md", "RECENT_HISTORY.md", "HANDOFF.md"]:
-        parts.append(f"### .rail/brain/{name}\n")
-        parts.append(docs[name].strip() + "\n")
-
-    contract_files = ["AI_CONTRACT.md", "AGENTS.md", "CODEX.md", "CLAUDE.md", "CHATGPT.md", "AIDER.md"]
-    existing_contracts = [(name, rail_dir() / name) for name in contract_files if (rail_dir() / name).exists()]
-    if existing_contracts:
-        parts.append("## AI contract files\n")
-        for name, path in existing_contracts:
-            parts.append(f"### .rail/{name}\n")
-            parts.append(safe_read_text(path, max_chars=max_section_chars).strip() + "\n")
-
-    if include_review:
-        parts.append("## Last review pack\n")
-        parts.append(safe_read_text(review_path(), "No last review pack found.", max_chars=max_section_chars).strip() + "\n")
-
-    if include_checks:
-        parts.append("## Last checks output\n")
-        parts.append(safe_read_text(checks_path(), "No last checks output found.", max_chars=max_section_chars).strip() + "\n")
-
-    parts.append("## Required response format\n")
-    parts.append("- Confirm the active task you understand.\n- List any missing context or risk.\n- Then provide the smallest safe next action.\n")
-    return "\n".join(parts).rstrip() + "\n"
+    return brain_render_handoff(
+        brain_context(),
+        target=target,
+        max_history=max_history,
+        include_review=include_review,
+        include_checks=include_checks,
+        max_section_chars=max_section_chars,
+    )
 
 
 def cmd_handoff(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail handoff")
-    parser.add_argument("--for", dest="target", choices=["generic", "chatgpt", "codex", "claude", "cursor", "aider"], default="generic")
-    parser.add_argument("--copy", action="store_true", help="Copy handoff to clipboard when possible.")
-    parser.add_argument("--output", help="Write handoff to a specific path instead of the default state file.")
-    parser.add_argument("--max-history", type=int, default=5)
-    parser.add_argument("--no-snapshot", action="store_true", help="Do not refresh .rail/brain before generating handoff.")
-    parser.add_argument("--include-review", action="store_true", help="Include .rail/state/last-review.md content.")
-    parser.add_argument("--include-checks", action="store_true", help="Include .rail/state/last-checks.md content.")
-    parser.add_argument("--max-section-chars", type=int, default=12000)
-    ns = parser.parse_args(argv)
-
-    if not rail_dir().exists():
-        print("No .rail folder found. Run: rail init", file=sys.stderr)
-        return 1
-
-    if not ns.no_snapshot:
-        rc = cmd_snapshot(["--quiet", "--max-history", str(ns.max_history)])
-        if rc != 0:
-            return rc
-
-    text = render_handoff(
-        target=ns.target,
-        max_history=ns.max_history,
-        include_review=ns.include_review,
-        include_checks=ns.include_checks,
-        max_section_chars=ns.max_section_chars,
-    )
-    output = Path(ns.output) if ns.output else handoff_state_path(ns.target)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(text, encoding="utf-8")
-
-    print(text)
-    print(f"[rail] handoff written: {output}")
-    if ns.copy:
-        if copy_to_clipboard(text):
-            print("[rail] handoff copied to clipboard")
-        else:
-            print("[rail] copy requested, but no supported clipboard command was found")
-    return 0
-
-
-EXPORT_TARGETS = {"agents", "claude", "cursor", "aider", "copilot"}
-EXPORT_BEGIN = "<!-- AI_RAIL_EXPORT_BEGIN -->"
-EXPORT_END = "<!-- AI_RAIL_EXPORT_END -->"
+    return brain_cmd_handoff(argv, brain_context())
 
 
 def export_path_for_target(target: str) -> Path:
-    paths = {
-        "agents": root() / "AGENTS.md",
-        "claude": root() / "CLAUDE.md",
-        "cursor": root() / ".cursor" / "rules" / "ai-rail.mdc",
-        "aider": root() / "AIDER.md",
-        "copilot": root() / ".github" / "copilot-instructions.md",
-    }
-    return paths[target]
+    return brain_export_path_for_target(root(), target)
 
 
 def export_label_for_target(target: str) -> str:
-    labels = {
-        "agents": "AGENTS.md / Codex-compatible agents",
-        "claude": "Claude Code",
-        "cursor": "Cursor rules",
-        "aider": "Aider",
-        "copilot": "GitHub Copilot instructions",
-    }
-    return labels[target]
+    return brain_export_label_for_target(target)
 
 
 def render_export_context(max_history: int = 5) -> str:
-    config = cfg()
-    active_issue = active_issue_summary()
-    files = changed_files()
-    project_name = config.get("project_name") or root().name
-    repository = configured_repository(config)
-    issue_line = (
-        f"#{active_issue.get('number')} — {active_issue.get('title')}"
-        if active_issue.get("number")
-        else "none"
-    )
-    changed = "\n".join(f"- {path}" for path in files) if files else "- None"
-    history = "\n".join(recent_history_lines(max_history))
-    issue_body = active_issue.get("body") or "_No active issue body captured._"
-    return f"""## AI Rail project state
-
-- Project: {project_name}
-- Repository: {repository}
-- Branch: {current_branch()}
-- Active issue: {issue_line}
-- Active model: {active_issue.get('interaction_model')}
-- Checks result: {checks_result()}
-- Generated: {utc_now()}
-
-### Current task body
-
-{issue_body}
-
-### Changed files
-{changed}
-
-### Recent AI Rail history
-{history}
-
-### Canonical project brain files
-
-Read these files when available. They are generated by `rail snapshot` and are the most portable source of truth for the current repo state:
-
-- `.rail/brain/PROJECT.md`
-- `.rail/brain/CURRENT_TASK.md`
-- `.rail/brain/STATUS.md`
-- `.rail/brain/RECENT_HISTORY.md`
-- `.rail/brain/HANDOFF.md`
-
-### AI Rail workflow rules
-
-- Keep work scoped to the active issue unless the human explicitly changes scope.
-- Prefer small diffs over broad rewrites.
-- Do not commit, push, close issues, or mark tasks done unless the human explicitly asks.
-- Preserve existing architecture and conventions.
-- Report changed files and checks clearly.
-- If context is missing, state exactly what is missing instead of guessing.
-""".rstrip()
+    return brain_render_export_context(brain_context(), max_history=max_history)
 
 
 def render_tool_export(target: str, max_history: int = 5) -> str:
-    context = render_export_context(max_history=max_history)
-    target_specific = {
-        "agents": """# AGENTS.md
-
-This repository uses AI Rail. Treat this file as repo-level guidance for Codex-compatible AI coding agents.
-
-## Agent role
-
-You are a scoped coding agent. Implement only the active task, keep edits narrow, and leave final review/ship actions to AI Rail and the human operator.
-
-Do not commit, close issues, create unrelated roadmaps, rewrite architecture, or run broad/full tests unless explicitly requested. Run only focused checks related to the task.""",
-        "claude": """# CLAUDE.md
-
-This repository uses AI Rail. Treat this file as Claude Code project memory and operating rules.
-
-## Claude role
-
-You may implement or review the active task. Before editing, summarize the active issue and the smallest safe plan. Avoid broad refactors unless explicitly requested.
-
-Do not commit, close issues, create unrelated roadmaps, or run broad/full tests unless explicitly requested. Run only focused checks related to the task.""",
-        "aider": """# AIDER.md
-
-This repository uses AI Rail. Treat this file as the active task brief for Aider.
-
-## Aider role
-
-Edit only files relevant to the active issue. Keep commits and shipping outside Aider unless the human explicitly asks for them.
-
-Do not create unrelated roadmaps, rewrite architecture, or run broad/full tests unless explicitly requested. Run only focused checks related to the task.""",
-        "copilot": """# GitHub Copilot instructions
-
-This repository uses AI Rail. Use the generated AI Rail project state below as repository guidance.
-
-## Copilot role
-
-Keep suggestions aligned with the active issue, existing architecture, and local checks. Avoid unrelated rewrites.
-
-Do not suggest broad/full test runs unless the issue explicitly asks for them. Prefer focused checks related to the task.""",
-    }
-    if target == "cursor":
-        header = """---
-description: AI Rail portable project brain and workflow rules
-alwaysApply: true
----
-
-# AI Rail Cursor rules
-
-This repository uses AI Rail. Treat this rule as always-on project context for Cursor.
-
-## Cursor role
-
-Keep edits scoped to the active issue. Use the project brain as authoritative context and avoid broad refactors unless explicitly requested.
-
-Do not commit, close issues, create unrelated roadmaps, or run broad/full tests unless explicitly requested. Run only focused checks related to the task."""
-    else:
-        header = target_specific[target]
-    return f"""{EXPORT_BEGIN}
-Generated by `rail export --target {target}` at {utc_now()}.
-Do not edit inside this managed block manually. Update it with `rail export`.
-
-{header}
-
-{context}
-{EXPORT_END}
-"""
+    return brain_render_tool_export(brain_context(), target, max_history=max_history)
 
 
 def write_managed_export(path: Path, content: str, *, force: bool = False, dry_run: bool = False) -> tuple[bool, str]:
-    if path.exists():
-        existing = path.read_text(encoding="utf-8", errors="replace")
-        has_begin = EXPORT_BEGIN in existing
-        has_end = EXPORT_END in existing
-        if has_begin and has_end:
-            before = existing.split(EXPORT_BEGIN, 1)[0]
-            after = existing.split(EXPORT_END, 1)[1]
-            new_text = before + content + after
-            action = "updated"
-        elif not force:
-            return False, f"refused existing unmarked file: {path} (use --force to replace with backup)"
-        else:
-            backup = next_backup_path(path)
-            if not dry_run:
-                backup.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, backup)
-            new_text = content
-            action = f"replaced with backup {backup}"
-    else:
-        new_text = content
-        action = "created"
-
-    if not dry_run:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_text, encoding="utf-8")
-    return True, f"{action}: {path}"
+    return brain_write_managed_export(brain_context(), path, content, force=force, dry_run=dry_run)
 
 
 def cmd_export(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail export")
-    parser.add_argument("--target", action="append", choices=["all", *sorted(EXPORT_TARGETS)], help="Export target. Repeatable. Default: all.")
-    parser.add_argument("--force", action="store_true", help="Replace existing unmarked files after writing a numbered .rail.bak.N backup.")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be written without changing files.")
-    parser.add_argument("--no-snapshot", action="store_true", help="Do not refresh .rail/brain before exporting.")
-    parser.add_argument("--max-history", type=int, default=5)
-    ns = parser.parse_args(argv)
-
-    if not rail_dir().exists():
-        print("No .rail folder found. Run: rail init", file=sys.stderr)
-        return 1
-
-    if not ns.no_snapshot and not ns.dry_run:
-        rc = cmd_snapshot(["--quiet", "--max-history", str(ns.max_history)])
-        if rc != 0:
-            return rc
-
-    requested = ns.target or ["all"]
-    targets = sorted(EXPORT_TARGETS) if "all" in requested else sorted(set(requested))
-
-    failures: list[str] = []
-    print("AI Rail tool exports:" + (" (dry run)" if ns.dry_run else ""))
-    for target in targets:
-        path = export_path_for_target(target)
-        content = render_tool_export(target, max_history=ns.max_history)
-        ok, message = write_managed_export(path, content, force=ns.force, dry_run=ns.dry_run)
-        label = export_label_for_target(target)
-        prefix = "OK" if ok else "SKIP"
-        print(f"- {prefix} {label}: {message}")
-        if not ok:
-            failures.append(message)
-
-    if failures:
-        print("\nSome exports were skipped to avoid overwriting human files.")
-        print("Use `rail export --force` only when you intentionally want AI Rail to replace them with backups.")
-        return 1
-    return 0
+    return brain_cmd_export(argv, brain_context())
 
 
 def cmd_ci_init(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail ci-init")
-    parser.add_argument("--force", action="store_true")
-    ns = parser.parse_args(argv)
-    cfg = read_json(rail_dir() / "config.json", {})
-    checks = cfg.get("checks") or []
-    if not checks:
-        print("No checks configured in .rail/config.json.")
-        return 1
-    workflow = root() / ".github" / "workflows" / "rail.yml"
-    if workflow.exists() and not ns.force:
-        print(f"{workflow} already exists. Use --force to overwrite.")
-        return 1
-    workflow.parent.mkdir(parents=True, exist_ok=True)
-
-    joined = "\n".join(checks).lower()
-    uses_python = any(token in joined for token in ["python", "pytest", "pip", "ruff", "mypy"])
-    uses_node = any(token in joined for token in ["npm", "node", "pnpm", "yarn", "npx"])
-
-    setup_steps: list[str] = ["      - uses: actions/checkout@v4\n"]
-
-    if uses_python:
-        setup_steps.append("""      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-""")
-        setup_steps.append("""      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ]; then pip install -e .; fi
-""")
-
-    if uses_node:
-        setup_steps.append("""      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-""")
-        setup_steps.append("""      - name: Install Node dependencies
-        run: |
-          if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
-""")
-
-    def yaml_run_step(index: int, command: str) -> str:
-        indented = "\n".join(f"          {line}" for line in command.splitlines() or [""])
-        return f"      - name: Run check {index}\n        run: |\n{indented}\n"
-
-    check_steps = "".join(yaml_run_step(i, str(cmd)) for i, cmd in enumerate(checks, 1))
-    content = """name: AI Rail Checks
-
-on:
-  push:
-  pull_request:
-
-jobs:
-  rail:
-    runs-on: ubuntu-latest
-    steps:
-""" + "".join(setup_steps) + check_steps
-
-    if workflow.exists() and ns.force:
-        backup = backup_file(workflow)
-        print(f"Backed up existing workflow to {backup}")
-    workflow.write_text(content, encoding="utf-8")
-    print(f"Created {workflow}")
-    return 0
-
+    return support_cmd_ci_init(argv, support_context())
 
 
 def render_demo_script() -> str:
-    return f"""# AI Rail 3-minute demo
-
-AI Rail is a local-first workflow rail and portable project brain for solo developers using AI coding assistants.
-
-## 1. Install AI Rail
-
-```bash
-pipx install ai-rail
-rail --version
-```
-
-Expected:
-
-```text
-AI Rail {VERSION}
-```
-
-## 2. Try the bundled TODO demo
-
-```bash
-cd examples/demo-todo
-rail init --stack node --project-name \"AI Rail Demo TODO\"
-rail doctor
-npm run check
-```
-
-## 3. Create or plan GitHub issues
-
-For a new project with no scoped issues yet:
-
-```bash
-rail plan --copy
-```
-
-Paste the planning prompt into a GitHub-connected AI agent. It should create a phased roadmap issue and a first batch of small implementation issues.
-
-After the AI creates or updates the roadmap issue and first issue slice:
-
-```bash
-rail import
-```
-
-For this demo, create one sample issue directly:
-
-```bash
-gh issue create --title \"Add todo body validation\" --body-file issues/001-add-body-validation.md
-```
-
-## 4. Start the scoped AI loop
-
-```bash
-rail next --copy
-```
-
-Paste the copied prompt into Codex, Claude Code, Cursor, Aider, or another AI coding tool. The agent should implement only the active issue and should not commit.
-
-## 5. Generate portable context for another AI session
-
-```bash
-rail snapshot
-rail handoff --for chatgpt --include-review --include-checks --copy
-```
-
-Paste the handoff into a new AI chat. The new model should understand the project, current issue, branch, checks, changed files, and next safe action without you re-explaining everything.
-
-## 6. Verify and ship
-
-```bash
-rail verify --copy
-rail ship \"fix(api): add todo body validation\"
-```
-
-`rail ship` refuses unsafe commits by default when review/check state is missing or stale, or when dangerous/generated files are changed.
-
-After several shipped issues, audit and update the current roadmap phase:
-
-```bash
-rail phase --copy
-rail import
-```
-
-## 7. Export the project brain to AI tool files
-
-```bash
-rail export --dry-run
-rail export
-```
-
-Generated files include:
-
-```text
-AGENTS.md
-CLAUDE.md
-AIDER.md
-.cursor/rules/ai-rail.mdc
-.github/copilot-instructions.md
-```
-
-## The point
-
-You can move between ChatGPT, Codex, Claude, Cursor, Aider, and patch mode without re-explaining the project every time.
-"""
+    return support_render_demo_script(support_context())
 
 
 def cmd_demo(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail demo")
-    parser.add_argument("--copy", action="store_true", help="Copy the demo script to clipboard when possible.")
-    parser.add_argument("--output", help="Write the demo script to a file.")
-    ns = parser.parse_args(argv)
-
-    text = render_demo_script()
-    if ns.output:
-        output = Path(ns.output)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(text, encoding="utf-8")
-        print(f"[rail] demo script written: {output}")
-    else:
-        print(text)
-
-    if ns.copy:
-        if copy_to_clipboard(text):
-            print("[rail] demo script copied to clipboard")
-        else:
-            print("[rail] copy requested, but no supported clipboard command was found")
-    return 0
+    return support_cmd_demo(argv, support_context())
 
 
 def cmd_about(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail about")
-    parser.parse_args(argv)
-    print(render_about())
-    return 0
+    return support_cmd_about(argv, support_context())
 
 
 def cmd_release_check(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="rail release-check")
-    parser.add_argument("--json", action="store_true", help="Print machine-readable result.")
-    ns = parser.parse_args(argv)
+    return support_cmd_release_check(argv, support_context())
 
-    required = [
-        "README.md",
-        "LICENSE",
-        "CHANGELOG.md",
-        "SECURITY.md",
-        "CONTRIBUTING.md",
-        "pyproject.toml",
-        "docs/QUICKSTART.md",
-        "docs/COMMANDS.md",
-        "docs/RELEASE.md",
-        "examples/demo-todo/README.md",
-        "examples/demo-todo/DEMO_SCRIPT.md",
-    ]
-    checks: list[dict[str, Any]] = []
-
-    def add(name: str, ok: bool, detail: str = "") -> None:
-        checks.append({"name": name, "ok": ok, "detail": detail})
-
-    for rel in required:
-        add(f"required file: {rel}", (root() / rel).exists())
-
-    pyproject = safe_read_text(root() / "pyproject.toml")
-    add("pyproject version matches CLI", f'version = "{VERSION}"' in pyproject)
-    add("pyproject exposes rail script", 'rail = "ai_rail.cli:main"' in pyproject)
-
-    template_runtime = safe_read_text(root() / "src" / "ai_rail" / "template" / ".rail" / "rail.py")
-    add("template runtime version matches CLI", f'VERSION = "{VERSION}"' in template_runtime)
-
-    cli_source = safe_read_text(root() / "src" / "ai_rail" / "cli.py")
-    try:
-        compile(cli_source, "src/ai_rail/cli.py", "exec")
-        add("cli.py compiles", True)
-    except SyntaxError as exc:
-        add("cli.py compiles", False, str(exc))
-
-    missing_docs = [name for name in ["QUICKSTART.md", "COMMANDS.md", "RELEASE.md"] if not (root() / "docs" / name).exists()]
-    add("public docs present", not missing_docs, ", ".join(missing_docs))
-
-    ok = all(item["ok"] for item in checks)
-    payload = {"ok": ok, "version": VERSION, "checks": checks}
-
-    if ns.json:
-        print(json.dumps(payload, indent=2))
-    else:
-        print(f"AI Rail release check for {VERSION}")
-        for item in checks:
-            mark = "OK" if item["ok"] else "FAIL"
-            suffix = f" — {item['detail']}" if item.get("detail") else ""
-            print(f"- {mark}: {item['name']}{suffix}")
-        print("\nResult: " + ("ready for alpha packaging" if ok else "not ready"))
-    return 0 if ok else 1
 
 def cmd_doctor(argv: list[str]) -> int:
     if not local_py().exists():
@@ -3174,7 +1381,7 @@ def cmd_doctor(argv: list[str]) -> int:
     if project_memory_has_placeholders():
         print("[rail] Project memory has placeholders. Run `rail plan --copy`, paste it into a GitHub-connected planning AI, then run `rail import`.")
         repo = detected_repository_for_github()
-        if repo and shutil.which("gh"):
+        if repo and gh_available():
             try:
                 open_issues = fetch_github_issues(repo, "open", limit=20)
                 roadmap, _multiple = roadmap_issue_from_open_issues(open_issues)
