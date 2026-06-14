@@ -161,6 +161,77 @@ def git_status_short() -> str:
     return run(["git", "status", "--short"], timeout=30).stdout.strip()
 
 
+def git_state_path(name: str) -> Path | None:
+    if not git_available():
+        return None
+    result = run(["git", "rev-parse", "--git-path", name], timeout=15)
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    path = Path(result.stdout.strip())
+    if not path.is_absolute():
+        path = ROOT / path
+    return path
+
+
+def git_path_exists(name: str) -> bool:
+    path = git_state_path(name)
+    return bool(path and path.exists())
+
+
+def unmerged_files() -> list[str]:
+    if not git_available():
+        return []
+    result = run(["git", "diff", "--name-only", "--diff-filter=U"], timeout=30)
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def git_safety_preflight() -> dict[str, Any]:
+    merge_active = git_path_exists("MERGE_HEAD")
+    rebase_active = git_path_exists("rebase-merge") or git_path_exists("rebase-apply")
+    cherry_pick_active = git_path_exists("CHERRY_PICK_HEAD")
+    revert_active = git_path_exists("REVERT_HEAD")
+    conflicts = unmerged_files()
+    return {
+        "current_branch": current_branch(),
+        "default_branch": default_branch(),
+        "unmerged_files": conflicts,
+        "has_unresolved_conflicts": bool(conflicts),
+        "merge_active": merge_active,
+        "rebase_active": rebase_active,
+        "cherry_pick_active": cherry_pick_active,
+        "revert_active": revert_active,
+        "has_active_git_operation": merge_active or rebase_active or cherry_pick_active or revert_active,
+    }
+
+
+def print_git_state_blocked(action: str, state: dict[str, Any]) -> None:
+    print(f"Error: rail {action} is blocked because Git has unresolved state.")
+    if state.get("unmerged_files"):
+        print("Unresolved files:")
+        for item in state["unmerged_files"]:
+            print(f"- {item}")
+    active = []
+    if state.get("merge_active"):
+        active.append("merge")
+    if state.get("rebase_active"):
+        active.append("rebase")
+    if state.get("cherry_pick_active"):
+        active.append("cherry-pick")
+    if state.get("revert_active"):
+        active.append("revert")
+    if active:
+        print("Active Git operation: " + ", ".join(active))
+    print("Run: git status --short")
+    print("Resolve conflicts and commit the merge, or abort it before continuing.")
+    print("If this is a merge you do not want to finish, run: git merge --abort")
+
+
+def git_state_blocks_new_work(state: dict[str, Any]) -> bool:
+    return bool(state.get("has_unresolved_conflicts") or state.get("has_active_git_operation"))
+
+
 def is_dirty() -> bool:
     status = git_status_short()
     return bool(status and status != "git unavailable")
@@ -1132,6 +1203,12 @@ def cmd_issue_list(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    state = git_safety_preflight()
+    if state.get("has_unresolved_conflicts"):
+        print_git_state_blocked("start", state)
+        print("Do not start a new task while .rail/PROJECT.md or code is conflicted.")
+        return 1
+
     existing_active = active_issue()
     if existing_active and not args.force:
         old = existing_active.get("issue", {})
@@ -1503,6 +1580,12 @@ def cmd_phase(args: argparse.Namespace) -> int:
 
 
 def cmd_import(args: argparse.Namespace) -> int:
+    state = git_safety_preflight()
+    if git_state_blocks_new_work(state):
+        print_git_state_blocked("import", state)
+        print("Resolve or abort the merge before importing.")
+        return 1
+
     if not RAIL_DIR.exists():
         print("No .rail folder found. Run: rail init", file=sys.stderr)
         return 1

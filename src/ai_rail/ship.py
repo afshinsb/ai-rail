@@ -24,6 +24,8 @@ class ShipContext:
     configured_default_branch: Callable[[], str]
     current_branch: Callable[[], str]
     delegate: Callable[..., int]
+    git_safety_preflight: Callable[[], dict[str, Any]]
+    git_state_blocks_new_work: Callable[[dict[str, Any]], bool]
     git_ref_exists: Callable[[str], bool]
     local_py: Callable[[], Path]
     mark_project_issue_completed: Callable[[Any, str | None, str | None], bool]
@@ -56,6 +58,9 @@ def print_merge_conflict_pause(ctx: ShipContext, issue_branch: str, default_bran
     ctx.rail_print(f"{ctx.rail_icon('info')} Issue branch state: {push_state}.")
     ctx.rail_print(f"{ctx.rail_icon('info')} GitHub issue is still open, and active state was preserved.")
     ctx.rail_print(f"{ctx.rail_icon('info')} `.rail/PROJECT.md` may already be marked `[x]` for this issue on `{issue_branch}`.")
+    ctx.rail_print(f"{ctx.rail_icon('warning')} Do not run `rail import` while this merge is conflicted.")
+    ctx.rail_print(f"{ctx.rail_icon('warning')} Do not run `rail ship` again until the conflict is resolved or aborted.")
+    ctx.rail_print(f"{ctx.rail_icon('tip')} First run `git status --short`, resolve the conflicted files, and `git add ...` them.")
     ctx.rail_print(f"{ctx.rail_icon('tip')} Resolve path: fix conflicts, run focused checks, `git add ...`, `git commit`, `git push origin {default_branch}`, then `rail issue-close --commit && rail done && rail sync`.")
     ctx.rail_print(f"{ctx.rail_icon('tip')} Abort path: `git merge --abort`, then `git checkout {issue_branch}` to return to the issue branch.")
 
@@ -63,6 +68,28 @@ def print_merge_conflict_pause(ctx: ShipContext, issue_branch: str, default_bran
 def print_no_merge_warning(ctx: ShipContext) -> None:
     ctx.rail_print(f"{ctx.rail_icon('warning')} rail ship --no-merge did not integrate this issue branch into the default branch.")
     ctx.rail_print(f"{ctx.rail_icon('info')} This is an advanced/manual compatibility path; branch-only work is not fully shipped.")
+
+
+def print_git_state_blocked(ctx: ShipContext, state: dict[str, Any]) -> None:
+    ctx.rail_print(f"{ctx.rail_icon('error')} rail ship is blocked because Git has unresolved state.")
+    if state.get("unmerged_files"):
+        ctx.rail_print(f"{ctx.rail_icon('warning')} Unresolved files:")
+        for item in state["unmerged_files"]:
+            ctx.rail_print(f"- {item}")
+    active_ops = []
+    if state.get("merge_active"):
+        active_ops.append("merge")
+    if state.get("rebase_active"):
+        active_ops.append("rebase")
+    if state.get("cherry_pick_active"):
+        active_ops.append("cherry-pick")
+    if state.get("revert_active"):
+        active_ops.append("revert")
+    if active_ops:
+        ctx.rail_print(f"{ctx.rail_icon('warning')} Active Git operation: {', '.join(active_ops)}")
+    ctx.rail_print(f"{ctx.rail_icon('tip')} Run: git status --short")
+    ctx.rail_print(f"{ctx.rail_icon('tip')} To finish a merge: resolve conflicts, `git add ...`, `git commit`, then run `rail issue-close --commit && rail done && rail sync` if the issue was already integrated.")
+    ctx.rail_print(f"{ctx.rail_icon('tip')} To abort: `git merge --abort`")
 
 
 def prepare_default_branch_ref(ctx: ShipContext, default_branch: str) -> tuple[bool, str]:
@@ -153,6 +180,19 @@ def integrate_issue_branch_into_default(ctx: ShipContext, issue_branch: str, *, 
 
 
 def run_ship(ns: argparse.Namespace, ctx: ShipContext) -> int:
+    state = ctx.git_safety_preflight()
+    default_branch = str(state.get("default_branch") or ctx.configured_default_branch())
+    current = str(state.get("current_branch") or ctx.current_branch())
+    if ctx.git_state_blocks_new_work(state):
+        print_git_state_blocked(ctx, state)
+        ctx.rail_print(f"{ctx.rail_icon('info')} Ship stopped before updating .rail/PROJECT.md, committing, pushing, closing issues, or syncing.")
+        return 1
+    if current == default_branch:
+        ctx.rail_print(f"{ctx.rail_icon('error')} Ship expects an issue branch, but you are on the default branch `{default_branch}`.")
+        ctx.rail_print(f"{ctx.rail_icon('info')} Ship stopped before updating .rail/PROJECT.md, committing, pushing, closing issues, or syncing.")
+        ctx.rail_print(f"{ctx.rail_icon('tip')} Checkout the issue branch and rerun `rail ship`, or use manual close/sync commands if the merge was already completed.")
+        return 1
+
     active_before_ship = ctx.active()
     project_path = ctx.rail_dir() / "PROJECT.md"
     project_memory_before_ship: str | None = None

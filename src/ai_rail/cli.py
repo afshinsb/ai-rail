@@ -60,7 +60,9 @@ from ai_rail.git_ops import (
     current_branch as git_current_branch,
     git_diff_for_fingerprint as git_diff_for_fingerprint_impl,
     git_ref_exists as git_ref_exists_impl,
+    git_safety_preflight as git_safety_preflight_impl,
     git_status_porcelain as git_status_porcelain_impl,
+    git_state_blocks_new_work as git_state_blocks_new_work_impl,
     is_probably_text_file as git_is_probably_text_file,
     latest_change_mtime as git_latest_change_mtime,
     rail_runtime_tracked_on_branch as git_rail_runtime_tracked_on_branch,
@@ -824,6 +826,12 @@ def cmd_next(argv: list[str]) -> int:
     parser.add_argument("--force", action="store_true")
     ns = parser.parse_args(argv)
 
+    git_state = git_safety_preflight()
+    if git_state.get("has_unresolved_conflicts"):
+        print_git_state_blocked("next", git_state)
+        print("Do not start a new task while .rail/PROJECT.md or code is conflicted.")
+        return 1
+
     if project_memory_has_placeholders():
         print("[rail] Project memory has placeholders. Run `rail import` after planning.")
 
@@ -878,6 +886,12 @@ def cmd_next(argv: list[str]) -> int:
 def cmd_import(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="rail import")
     parser.parse_args(argv)
+
+    git_state = git_safety_preflight()
+    if git_state_blocks_new_work(git_state):
+        print_git_state_blocked("import", git_state)
+        print("Resolve or abort the merge before importing.")
+        return 1
 
     if not rail_dir().exists():
         print("No .rail folder found. Run: rail init", file=sys.stderr)
@@ -1011,6 +1025,8 @@ def cmd_ship(argv: list[str]) -> int:
         configured_default_branch=configured_default_branch,
         current_branch=current_branch,
         delegate=delegate,
+        git_safety_preflight=git_safety_preflight,
+        git_state_blocks_new_work=git_state_blocks_new_work,
         git_ref_exists=git_ref_exists,
         local_py=local_py,
         mark_project_issue_completed=mark_project_issue_completed,
@@ -1246,6 +1262,36 @@ def copy_to_clipboard(text: str) -> bool:
 
 def git_status_porcelain() -> str:
     return git_status_porcelain_impl(run)
+
+
+def git_safety_preflight() -> dict[str, Any]:
+    return git_safety_preflight_impl(root(), configured_default_branch(), run)
+
+
+def git_state_blocks_new_work(state: dict[str, Any]) -> bool:
+    return git_state_blocks_new_work_impl(state)
+
+
+def print_git_state_blocked(action: str, state: dict[str, Any]) -> None:
+    print(f"Error: rail {action} is blocked because Git has unresolved state.")
+    if state.get("unmerged_files"):
+        print("Unresolved files:")
+        for item in state["unmerged_files"]:
+            print(f"- {item}")
+    active_ops = []
+    if state.get("merge_active"):
+        active_ops.append("merge")
+    if state.get("rebase_active"):
+        active_ops.append("rebase")
+    if state.get("cherry_pick_active"):
+        active_ops.append("cherry-pick")
+    if state.get("revert_active"):
+        active_ops.append("revert")
+    if active_ops:
+        print("Active Git operation: " + ", ".join(active_ops))
+    print("Run: git status --short")
+    print("Resolve conflicts and commit the merge, or abort it before continuing.")
+    print("If this is a merge you do not want to finish, run: git merge --abort")
 
 
 def cfg() -> dict[str, Any]:

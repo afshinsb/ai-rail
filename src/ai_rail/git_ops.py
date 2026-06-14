@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 RunFunc = Callable[[list[str], int], subprocess.CompletedProcess[str]]
 
@@ -146,3 +146,52 @@ def git_status_porcelain(run_func: RunFunc) -> str:
     if result.returncode != 0:
         return "git status unavailable"
     return result.stdout.strip() or "clean"
+
+
+def git_state_path(root_path: Path, name: str, run_func: RunFunc) -> Path | None:
+    if not shutil.which("git"):
+        return None
+    result = run_func(["git", "rev-parse", "--git-path", name], 15)
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    path = Path(result.stdout.strip())
+    if not path.is_absolute():
+        path = root_path / path
+    return path
+
+
+def git_path_exists(root_path: Path, name: str, run_func: RunFunc) -> bool:
+    path = git_state_path(root_path, name, run_func)
+    return bool(path and path.exists())
+
+
+def unmerged_files(run_func: RunFunc) -> list[str]:
+    if not shutil.which("git"):
+        return []
+    result = run_func(["git", "diff", "--name-only", "--diff-filter=U"], 30)
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def git_safety_preflight(root_path: Path, default_branch: str, run_func: RunFunc) -> dict[str, Any]:
+    merge_active = git_path_exists(root_path, "MERGE_HEAD", run_func)
+    rebase_active = git_path_exists(root_path, "rebase-merge", run_func) or git_path_exists(root_path, "rebase-apply", run_func)
+    cherry_pick_active = git_path_exists(root_path, "CHERRY_PICK_HEAD", run_func)
+    revert_active = git_path_exists(root_path, "REVERT_HEAD", run_func)
+    conflicts = unmerged_files(run_func)
+    return {
+        "current_branch": current_branch(run_func),
+        "default_branch": default_branch,
+        "unmerged_files": conflicts,
+        "has_unresolved_conflicts": bool(conflicts),
+        "merge_active": merge_active,
+        "rebase_active": rebase_active,
+        "cherry_pick_active": cherry_pick_active,
+        "revert_active": revert_active,
+        "has_active_git_operation": merge_active or rebase_active or cherry_pick_active or revert_active,
+    }
+
+
+def git_state_blocks_new_work(state: dict[str, Any]) -> bool:
+    return bool(state.get("has_unresolved_conflicts") or state.get("has_active_git_operation"))
