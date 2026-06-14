@@ -16,7 +16,10 @@ def gh_available() -> bool:
 def detect_repo_from_gh(run_func: RunFunc) -> str | None:
     if not gh_available():
         return None
-    result = run_func(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], 10)
+    try:
+        result = run_func(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], 10)
+    except (subprocess.SubprocessError, OSError):
+        return None
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
     return None
@@ -25,7 +28,10 @@ def detect_repo_from_gh(run_func: RunFunc) -> str | None:
 def detect_default_branch_from_gh(run_func: RunFunc) -> str | None:
     if not gh_available():
         return None
-    result = run_func(["gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"], 10)
+    try:
+        result = run_func(["gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"], 10)
+    except (subprocess.SubprocessError, OSError):
+        return None
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
     return None

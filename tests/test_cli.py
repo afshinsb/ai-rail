@@ -157,6 +157,39 @@ def test_init_creates_node_config_with_fallback_check(tmp_path: Path) -> None:
     assert (tmp_path / ".rail" / "AIDER.md").exists()
 
 
+def test_init_continues_when_gh_repo_detection_times_out(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    sys.path.insert(0, str(ROOT / "src"))
+    import ai_rail.cli as cli
+    import ai_rail.github_ops as github_ops
+
+    real_run = cli.run
+    real_which = github_ops.shutil.which
+
+    def fake_run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["gh", "repo", "view"]:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return real_run(cmd, timeout)
+
+    def fake_which(name: str) -> str | None:
+        if name == "gh":
+            return "gh"
+        return real_which(name)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "run", fake_run)
+    monkeypatch.setattr(github_ops.shutil, "which", fake_which)
+
+    result = cli.cmd_init(["--stack", "node", "--project-name", "Demo"])
+
+    assert result == 0
+    cfg = json.loads((tmp_path / ".rail" / "config.json").read_text(encoding="utf-8"))
+    assert cfg["project_name"] == "Demo"
+    assert cfg["repository"] == "owner/project"
+    assert cfg["checks"] == []
+
+
 def test_init_node_chooses_typecheck_when_check_script_missing(tmp_path: Path) -> None:
     git_init(tmp_path)
     (tmp_path / "package.json").write_text(json.dumps({"scripts": {"typecheck": "tsc --noEmit"}}), encoding="utf-8")
@@ -639,6 +672,19 @@ def test_detect_repo_returns_none_when_gh_missing_and_remote_unavailable(tmp_pat
     monkeypatch.setattr(cli.shutil, "which", fake_which)
 
     assert cli.detect_repo_from_tools() is None
+
+
+def test_github_detection_returns_none_on_timeout(monkeypatch) -> None:
+    sys.path.insert(0, str(ROOT / "src"))
+    import ai_rail.github_ops as github_ops
+
+    def fake_run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(github_ops.shutil, "which", lambda name: "gh" if name == "gh" else None)
+
+    assert github_ops.detect_repo_from_gh(fake_run) is None
+    assert github_ops.detect_default_branch_from_gh(fake_run) is None
 
 
 def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> None:
