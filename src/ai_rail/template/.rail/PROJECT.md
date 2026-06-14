@@ -38,8 +38,8 @@ CHANGE_ME: Describe the current phase goal.
 - CHANGE_ME: Define what makes this phase complete.
 
 ### Tasks
-- [ ] TBD | P1-T01 | CHANGE_ME: First scoped task title
-- [ ] TBD | P1-T02 | CHANGE_ME: Second scoped task title
+- [ ] P1-T01 | TBD | CHANGE_ME: First scoped task title
+- [ ] P1-T02 | TBD | CHANGE_ME: Second scoped task title
 
 ## Phase P2 - Next phase
 Status: planned
@@ -51,7 +51,7 @@ CHANGE_ME: Describe the next phase goal.
 - CHANGE_ME: Define what makes this phase complete.
 
 ### Tasks
-- [ ] TBD | P2-T01 | CHANGE_ME: Future scoped task title
+- [ ] P2-T01 | TBD | CHANGE_ME: Future scoped task title
 
 <!-- AI RAIL ROADMAP END -->
 
@@ -60,9 +60,9 @@ CHANGE_ME: Describe the next phase goal.
 ## Roadmap maintenance rules
 
 - Keep exactly one `AI RAIL ROADMAP START/END` block.
-- Every task line in that block must be `- [ ] ISSUE | TASK_ID | TITLE` or `- [x] ISSUE | TASK_ID | TITLE`.
-- `ISSUE` must be `#123` for active GitHub issues or `TBD` for future tasks.
+- Every task line in that block must be `- [ ] TASK_ID | ISSUE | TITLE` or `- [x] TASK_ID | ISSUE | TITLE`.
 - `TASK_ID` must look like `P1-T01`, `P2-T03`, and must be unique.
+- `ISSUE` must be `#123` for active GitHub issues or `TBD` for future tasks.
 - Phase `Status:` must be `planned`, `active`, `complete`, or `blocked`.
 - Do not use numbered lists for task status in the strict block.
 - Do not duplicate task status elsewhere as a second source of truth.

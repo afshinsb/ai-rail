@@ -6,7 +6,7 @@
 
 On first import, `rail import` replaces the placeholder project-memory template with the imported managed roadmap memory. Later imports update only the managed block and preserve human notes outside the markers.
 
-Imported project memory must contain one Rail-readable `AI RAIL ROADMAP START/END` block. `rail doctor` warns when `.rail/PROJECT.md` is missing that block or has malformed task lines, duplicate task IDs, duplicate issue refs, or invalid phase statuses.
+Imported project memory must contain one Rail-readable `AI RAIL ROADMAP START/END` block. Task lines use `TASK_ID | ISSUE | TITLE`, such as `P1-T01 | #123 | Title` or `P1-T02 | TBD | Title`. `rail doctor` warns when `.rail/PROJECT.md` is missing that block or has malformed task lines, duplicate task IDs, duplicate issue refs, invalid phase statuses, or multiple active phases.
 
 | Command | Purpose |
 |---|---|
@@ -90,7 +90,9 @@ Existing initialized repos can refresh their copied local runtime after installi
 rail upgrade
 ```
 
-`rail upgrade` preserves `.rail/config.json`, `.rail/state/`, `.rail/reports/`, and `.rail/prompts/` while updating template-managed files such as `.rail/rail.py`.
+`rail upgrade` preserves `.rail/config.json`, project/user files such as `.rail/PROJECT.md` and AI guidance files, `.rail/state/`, `.rail/reports/`, and `.rail/prompts/` while updating template-managed files such as `.rail/rail.py`.
+
+Use `rail upgrade --refresh-config` to also re-detect safe config defaults such as repository, default branch, and checks.
 
 ## Common Workflows
 
@@ -106,7 +108,7 @@ rail ship "fix(scope): message"
 
 By default, `rail ship` means the issue branch is integrated into the configured default branch. It commits and pushes the issue branch, verifies the default branch and `.rail/rail.py`, checks out and pulls the default branch, merges the issue branch, pushes the default branch, then closes the issue and clears active state. If the merge conflicts, the issue remains open and active state remains. If `.rail/` is not tracked on the default branch, ship pauses before checkout so `.rail/rail.py`, `.rail/PROJECT.md`, `.rail/config.json`, and local state folders are not removed.
 
-`rail ship --no-merge` is an advanced/manual compatibility path. It does not integrate code into the default branch, so branch-only work should not be treated as fully shipped until you merge it manually.
+`rail ship --no-push`, `rail ship --no-sync`, and `rail ship --no-merge` are pause/manual modes. They do not close the issue or clear active state unless the default branch was integrated and pushed; merge and push manually before running `rail issue-close --commit && rail done && rail sync`.
 
 ### Run A Focused Check
 

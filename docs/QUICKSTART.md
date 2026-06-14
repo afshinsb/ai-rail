@@ -34,6 +34,8 @@ To refresh an already initialized repo after upgrading AI Rail itself:
 rail upgrade
 ```
 
+Use `rail upgrade --refresh-config` when you also want to re-detect safe config defaults such as repository, default branch, and checks.
+
 Stack presets:
 
 ```bash
@@ -51,7 +53,7 @@ rail plan --copy
 # paste into a GitHub-connected AI agent
 ```
 
-That AI should create a phased roadmap issue and a first batch of small implementation issues.
+That AI should create a phased roadmap issue and all issues for the first active execution slice.
 It should put the full project memory and roadmap in the GitHub roadmap issue. Import that remote roadmap mirror locally:
 
 ```bash
@@ -83,11 +85,12 @@ rail phase --copy
 # paste into a GitHub-connected AI reviewer/agent
 ```
 
-Phase audit asks the planning AI to update the GitHub roadmap issue and next execution slice. `rail next` still starts one task at a time.
+Phase audit asks the planning AI to update the GitHub roadmap issue and create all issues for the next active execution slice. `rail next` still starts one task at a time.
 
 ```bash
 rail import
 # refresh .rail/PROJECT.md after phase planning
+rail next --copy
 ```
 
 See [WORKFLOWS.md](WORKFLOWS.md) for the Codex-based, patch-based, and AI-direct interaction models.

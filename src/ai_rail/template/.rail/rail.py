@@ -1153,17 +1153,18 @@ Plain text phase goal.
 - Plain text criterion.
 
 ### Tasks
-- [ ] #123 | P1-T01 | Existing active issue title
-- [ ] TBD | P1-T02 | Future task title
+- [ ] P1-T01 | #123 | Existing active issue title
+- [ ] P1-T02 | TBD | Future task title
 
 <!-- AI RAIL ROADMAP END -->
 
 Strict roadmap rules:
 - Every task line must use exactly one of these forms:
-  - [ ] ISSUE | TASK_ID | TITLE
-  - [x] ISSUE | TASK_ID | TITLE
-- `ISSUE` must be `#N` for GitHub issues that exist or `TBD` for future tasks not yet created.
+  - [ ] TASK_ID | ISSUE | TITLE
+  - [x] TASK_ID | ISSUE | TITLE
 - `TASK_ID` must look like `P1-T01`, `P2-T03`, and be unique.
+- `ISSUE` must be `#N` for GitHub issues that exist or `TBD` for future tasks not yet created.
+- Legacy issue-first task lines are still accepted by Rail, but new roadmap text should use task-id-first.
 - Phase `Status:` must be one of `planned`, `active`, `complete`, or `blocked`.
 - Use checkboxes for every task.
 - Do not use numbered lists for task status inside the strict block.
@@ -1202,9 +1203,12 @@ Structure the roadmap into phases. Example phase styles:
 
 Do not force those exact phase names; choose phases that fit this repo.
 
-Create only the first active execution slice as implementation-ready GitHub Issues:
+Create all issues for the first active execution slice/current phase as implementation-ready GitHub Issues:
 - usually 3-10 right-sized implementation issues
+- do not stop after creating one issue unless the phase truly has one task or GitHub/API failure blocks more
 - do not create GitHub issues for the entire long-term roadmap
+- assign `#N` issue refs in the strict roadmap block for issues you create
+- keep future tasks as `Pn-Txx | TBD | title`
 - small enough for one focused coding-agent pass
 - big enough to be meaningful
 - not tiny/noisy micro-tasks
@@ -1213,6 +1217,8 @@ Create only the first active execution slice as implementation-ready GitHub Issu
 - each issue should produce a clear diff
 - avoid vague issues like "improve UI" or "refactor app"
 - prefer backbone/config/foundation fixes before polish
+- if GitHub blocks long issue bodies, create shorter issue bodies but still create issue shells and insert `#N` refs
+- if not all active-slice issues are created, list which tasks remain `TBD` and why
 
 Each implementation issue must include this body template:
 
@@ -1293,9 +1299,10 @@ Do not leave stale phase/task sections.
 Do not include `CHANGE_ME`.
 Inside it, preserve and update exactly one strict `<!-- AI RAIL ROADMAP START -->` / `<!-- AI RAIL ROADMAP END -->` block.
 Every task line in that block must stay exactly one of these forms:
-- [ ] ISSUE | TASK_ID | TITLE
-- [x] ISSUE | TASK_ID | TITLE
+- [ ] TASK_ID | ISSUE | TITLE
+- [x] TASK_ID | ISSUE | TITLE
 Use `#N` for existing GitHub issues and `TBD` for future tasks not yet created.
+Legacy issue-first task lines are still accepted by Rail, but new roadmap text should use task-id-first.
 Use phase statuses only from: planned, active, complete, blocked.
 Do not use numbered lists for task status.
 Do not invent alternate task structures.
@@ -1329,15 +1336,19 @@ If the phase is complete:
 - update phase `Status:` lines in the strict roadmap block
 - update completed work, current phase, next recommended issue, and blockers/postponed work in the roadmap issue memory block
 - mark or recommend the phase as complete in the GitHub roadmap issue
-- recommend or create only the next active execution slice for the next phase
+- recommend or create all issues for the next active execution slice/current phase
+- usually create 3-10 right-sized implementation issues
+- do not stop after creating one issue unless the slice truly has one task or GitHub/API failure blocks more
 - keep new issues right-sized for coding agents
 
 If the phase is not complete:
 - list remaining blockers
 - create or update only scoped blocker issues
-- replace `TBD` with issue numbers when you create the next active execution slice
-- add future tasks only as `- [ ] TBD | Pn-Txx | title`
+- replace `TBD` with issue numbers when you create all issues for the next active execution slice/current phase
+- add future tasks only as `- [ ] Pn-Txx | TBD | title`
 - do not start the next phase yet
+- if GitHub blocks long issue bodies, create shorter issue bodies but still create issue shells and insert `#N` refs
+- if not all active-slice issues are created, list which tasks remain `TBD` and why
 
 Review upcoming phases and decide whether the roadmap is still correct. If it is off-track, update upcoming phases in the GitHub roadmap issue, then clearly tell the user what changed and why.
 
@@ -1403,7 +1414,7 @@ def cmd_import(args: argparse.Namespace) -> int:
     if not gh_available():
         print("GitHub CLI `gh` is required for rail import.", file=sys.stderr)
         return 1
-    repo = detect_repo_from_git_remote() or load_config().get("repository")
+    repo = detect_repo()
     if repo in {None, "", "CHANGE_ME"}:
         print("Could not detect GitHub repository. Set .rail/config.json repository or git remote origin.", file=sys.stderr)
         return 1
@@ -1624,9 +1635,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
         print(checkout.stderr.strip() or checkout.stdout.strip())
         return checkout.returncode or 1
 
-    pull = run(["git", "pull"], timeout=120)
+    pull = run(["git", "pull", "--ff-only"], timeout=120)
     if pull.returncode != 0:
         print(pull.stderr.strip() or pull.stdout.strip())
+        print("Sync paused because the target branch could not fast-forward cleanly.")
         return pull.returncode or 1
 
     print(checkout.stdout.strip() or checkout.stderr.strip())
@@ -1779,7 +1791,7 @@ def cmd_done(args: argparse.Namespace) -> int:
     db = default_branch()
     print("\nNext:")
     print("rail sync")
-    print(f"# or manually: git checkout {db} && git pull")
+    print(f"# or manually: git checkout {db} && git pull --ff-only")
     print("rail start next   # or: rail start latest / rail start ISSUE_NUMBER")
     return 0
 
@@ -1841,7 +1853,7 @@ def parse_args() -> argparse.Namespace:
     commit.add_argument("--allow-missing-checks", action="store_true", help="Allow commit when checks are missing/unknown.")
     commit.add_argument("--allow-stale", action="store_true", help="Allow commit when checks are older than changed files.")
 
-    sync = sub.add_parser("sync", help="Checkout default branch and pull.")
+    sync = sub.add_parser("sync", help="Checkout default branch and pull --ff-only.")
     sync.add_argument("--branch", help="Branch to sync instead of default branch.")
     sync.add_argument("--force", action="store_true", help="Allow sync with dirty worktree.")
 

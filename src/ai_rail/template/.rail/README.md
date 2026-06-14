@@ -16,10 +16,11 @@ Issue -> Start -> Prompt -> Edit/Patch/AI-direct -> Review -> Checks -> Audit ->
 - `rail plan --copy` creates the planning prompt before scoped issues exist.
 - `rail import` imports the roadmap issue into `.rail/PROJECT.md`.
 - `rail phase --copy` creates the phase-audit prompt after several shipped issues.
+- After `rail phase --copy`, run `rail import`, then `rail next --copy`.
 - Coding happens one issue at a time through `rail next --copy`.
 - `rail ship` closes one issue and marks matching checklist tasks complete locally.
 
-Roadmap task state lives in exactly one strict `AI RAIL ROADMAP START/END` block inside `.rail/PROJECT.md`. Rail only edits task status inside that block. Future tasks use `TBD | Pn-Txx | title`; the phase AI creates the next issue slice and replaces `TBD` with issue numbers when those GitHub issues exist.
+Roadmap task state lives in exactly one strict `AI RAIL ROADMAP START/END` block inside `.rail/PROJECT.md`. Rail only edits task status inside that block. Task lines use `TASK_ID | ISSUE | TITLE`; future tasks use `Pn-Txx | TBD | title`. The phase AI creates the next issue slice and replaces `TBD` with issue numbers when those GitHub issues exist.
 
 Coding agents should not silently update the roadmap or create extra tasks unless the planning or phase prompt asks for that.
 

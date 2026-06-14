@@ -55,6 +55,21 @@ def write_active_issue(path: Path, number: int = 1, title: str = "Test issue") -
     (state / "active.json").write_text(json.dumps(active), encoding="utf-8")
 
 
+def strict_roadmap_block(task_line: str = "- [ ] P1-T01 | #2 | Build thing") -> str:
+    return (
+        "<!-- AI RAIL ROADMAP START -->\n\n"
+        "## Phase P1 - Foundation\n"
+        "Status: active\n\n"
+        "### Goal\n"
+        "Ship safely.\n\n"
+        "### Completion criteria\n"
+        "- Done.\n\n"
+        "### Tasks\n"
+        f"{task_line}\n\n"
+        "<!-- AI RAIL ROADMAP END -->"
+    )
+
+
 def ship_without_remote(path: Path, message: str, *extra_args: str) -> subprocess.CompletedProcess[str]:
     return run_cli(path, "ship", message, "--no-push", "--no-close", "--no-done", "--no-sync", *extra_args)
 
@@ -305,7 +320,7 @@ def test_doctor_warns_on_malformed_roadmap_task_line(tmp_path: Path) -> None:
 def test_doctor_warns_on_duplicate_roadmap_task_ids(tmp_path: Path) -> None:
     git_init(tmp_path)
     assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
-    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | One\n- [ ] #3 | P1-T01 | Two\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] P1-T01 | #2 | One\n- [ ] P1-T01 | #3 | Two\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
 
     doctor = run_cli(tmp_path, "doctor")
 
@@ -315,7 +330,7 @@ def test_doctor_warns_on_duplicate_roadmap_task_ids(tmp_path: Path) -> None:
 def test_doctor_warns_on_duplicate_roadmap_issue_refs(tmp_path: Path) -> None:
     git_init(tmp_path)
     assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
-    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | One\n- [ ] #2 | P1-T02 | Two\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] P1-T01 | #2 | One\n- [ ] P1-T02 | #2 | Two\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
 
     doctor = run_cli(tmp_path, "doctor")
 
@@ -464,6 +479,40 @@ def test_upgrade_updates_runtime_and_preserves_local_data(tmp_path: Path) -> Non
     assert "Preserved .rail/config.json" in result.stdout
 
 
+def test_upgrade_preserves_custom_project_memory_and_updates_runtime(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+    project = tmp_path / ".rail" / "PROJECT.md"
+    rail_py = tmp_path / ".rail" / "rail.py"
+    project.write_text("# Custom project memory\n\nKeep this.\n", encoding="utf-8")
+    rail_py.write_text("# old runtime\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "upgrade")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert project.read_text(encoding="utf-8") == "# Custom project memory\n\nKeep this.\n"
+    assert "old runtime" not in rail_py.read_text(encoding="utf-8")
+    assert "Preserved protected project/user files:" in result.stdout
+    assert ".rail/PROJECT.md" in result.stdout
+
+
+def test_upgrade_preserves_custom_agent_guidance_and_updates_runtime(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+    agents = tmp_path / ".rail" / "AGENTS.md"
+    rail_py = tmp_path / ".rail" / "rail.py"
+    agents.write_text("# Custom agent guidance\n\nKeep this.\n", encoding="utf-8")
+    rail_py.write_text("# old runtime\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "upgrade")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert agents.read_text(encoding="utf-8") == "# Custom agent guidance\n\nKeep this.\n"
+    assert "old runtime" not in rail_py.read_text(encoding="utf-8")
+    assert "Preserved protected project/user files:" in result.stdout
+    assert ".rail/AGENTS.md" in result.stdout
+
+
 def test_upgrade_is_idempotent(tmp_path: Path) -> None:
     git_init(tmp_path)
     assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
@@ -496,7 +545,7 @@ def test_project_template_defines_local_project_memory() -> None:
     assert "local AI Rail project memory and roadmap brain" in text
     assert "AI RAIL MANAGED ROADMAP START" in text
     assert "AI RAIL ROADMAP START" in text
-    assert "- [ ] TBD | P1-T01 |" in text
+    assert "- [ ] P1-T01 | TBD |" in text
     assert "Status: active" in text
     assert "## Roadmap maintenance rules" in text
     assert "Do not create `.rail/ROADMAP.md`" in text
@@ -617,8 +666,8 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert "target state" in result.stdout
     assert "full phased roadmap" in result.stdout
     assert "AI RAIL ROADMAP START" in result.stdout
-    assert "`- [ ] ISSUE | TASK_ID | TITLE`" in result.stdout
-    assert "TBD | Pn-Txx | title" in result.stdout
+    assert "`- [ ] TASK_ID | ISSUE | TITLE`" in result.stdout
+    assert "Pn-Txx | TBD | title" in result.stdout
     assert "next recommended issue/task" in result.stdout
     assert "phased" in result.stdout.lower()
     assert "Roadmap: Road Demo functional MVP" in result.stdout
@@ -675,8 +724,8 @@ def test_phase_prints_phase_audit_prompt_without_active_issue(tmp_path: Path) ->
     assert "one focused coding session" in result.stdout
     assert "rail n -> coding agent -> rail v -> reviewer -> rail s" in result.stdout
     assert "AI RAIL ROADMAP START" in result.stdout
-    assert "`- [ ] ISSUE | TASK_ID | TITLE`" in result.stdout
-    assert "TBD | Pn-Txx | title" in result.stdout
+    assert "`- [ ] TASK_ID | ISSUE | TITLE`" in result.stdout
+    assert "Pn-Txx | TBD | title" in result.stdout
 
 
 def test_phase_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
@@ -727,7 +776,7 @@ def test_import_extracts_managed_memory_and_writes_project(tmp_path: Path, monke
     git_init(tmp_path)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
     run_cli(tmp_path, "init", "--stack", "static")
-    body = "intro\n<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n- [ ] #2 Build thing\n<!-- AI RAIL PROJECT MEMORY END -->"
+    body = f"intro\n<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n{strict_roadmap_block()}\n<!-- AI RAIL PROJECT MEMORY END -->"
     install_fake_gh(
         tmp_path,
         monkeypatch,
@@ -745,7 +794,7 @@ def test_import_extracts_managed_memory_and_writes_project(tmp_path: Path, monke
     assert "AI RAIL MANAGED ROADMAP START" in text
     assert "AI RAIL ROADMAP START" in text
     assert "## Roadmap" in text
-    assert "- [ ] #2 Build thing" in text
+    assert "- [ ] P1-T01 | #2 | Build thing" in text
     assert not (tmp_path / ".rail" / "ROADMAP.md").exists()
     assert "Open issues: 1" in result.stdout
     assert "Closed issues: 1" in result.stdout
@@ -755,7 +804,7 @@ def test_import_preserves_strict_roadmap_block(tmp_path: Path, monkeypatch) -> N
     git_init(tmp_path)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
     run_cli(tmp_path, "init", "--stack", "static")
-    strict = "<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Goal\nShip safely.\n\n### Completion criteria\n- Done.\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->"
+    strict = strict_roadmap_block()
     body = f"<!-- AI RAIL PROJECT MEMORY START -->\n## Notes\n\n{strict}\n<!-- AI RAIL PROJECT MEMORY END -->"
     install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
 
@@ -767,26 +816,38 @@ def test_import_preserves_strict_roadmap_block(tmp_path: Path, monkeypatch) -> N
     assert strict in text
 
 
-def test_import_does_not_duplicate_strict_roadmap_blocks(tmp_path: Path, monkeypatch) -> None:
+def test_import_rejects_duplicate_strict_roadmap_blocks(tmp_path: Path, monkeypatch) -> None:
     git_init(tmp_path)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
     run_cli(tmp_path, "init", "--stack", "static")
-    strict = "<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Goal\nShip safely.\n\n### Completion criteria\n- Done.\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->"
+    strict = strict_roadmap_block()
     body = f"<!-- AI RAIL PROJECT MEMORY START -->\n{strict}\n\n{strict}\n<!-- AI RAIL PROJECT MEMORY END -->"
     install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
 
     result = run_cli(tmp_path, "import")
 
-    assert result.returncode == 0, result.stderr + result.stdout
-    text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
-    assert text.count("<!-- AI RAIL ROADMAP START -->") == 1
+    assert result.returncode == 1
+    assert "Import failed: managed roadmap memory contains 2 strict AI RAIL ROADMAP blocks; expected exactly one." in result.stderr
+
+
+def test_import_rejects_managed_memory_without_strict_roadmap_block(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static")
+    body = "<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n- [ ] #2 Build thing\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 1
+    assert "Import failed: managed roadmap memory contains no strict AI RAIL ROADMAP blocks; expected exactly one." in result.stderr
 
 
 def test_import_replaces_default_project_placeholders(tmp_path: Path, monkeypatch) -> None:
     git_init(tmp_path)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
     run_cli(tmp_path, "init", "--stack", "static", "--project-name", "Clean Import")
-    body = "<!-- AI RAIL PROJECT MEMORY START -->\n## Product summary\n\nReal app.\n\n## Stack\n\nPython.\n<!-- AI RAIL PROJECT MEMORY END -->"
+    body = f"<!-- AI RAIL PROJECT MEMORY START -->\n## Product summary\n\nReal app.\n\n## Stack\n\nPython.\n\n{strict_roadmap_block()}\n<!-- AI RAIL PROJECT MEMORY END -->"
     install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Clean", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
 
     result = run_cli(tmp_path, "import")
@@ -808,7 +869,7 @@ def test_import_preserves_user_content_outside_managed_markers(tmp_path: Path, m
     run_cli(tmp_path, "init", "--stack", "static")
     project = tmp_path / ".rail" / "PROJECT.md"
     project.write_text("# Human notes\n\nkeep me\n\n<!-- AI RAIL MANAGED ROADMAP START -->\nold\n<!-- AI RAIL MANAGED ROADMAP END -->\n\nfooter\n", encoding="utf-8")
-    body = "<!-- AI RAIL PROJECT MEMORY START -->\nnew roadmap\n<!-- AI RAIL PROJECT MEMORY END -->"
+    body = f"<!-- AI RAIL PROJECT MEMORY START -->\nnew roadmap\n\n{strict_roadmap_block()}\n<!-- AI RAIL PROJECT MEMORY END -->"
     install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
 
     result = run_cli(tmp_path, "import")
@@ -827,7 +888,7 @@ def test_import_appends_managed_block_after_human_notes_without_markers(tmp_path
     run_cli(tmp_path, "init", "--stack", "static")
     project = tmp_path / ".rail" / "PROJECT.md"
     project.write_text("# Human project notes\n\nThis app handles invoices.\n", encoding="utf-8")
-    body = "<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n- [ ] #2 Build invoices\n<!-- AI RAIL PROJECT MEMORY END -->"
+    body = f"<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n{strict_roadmap_block('- [ ] P1-T01 | #2 | Build invoices')}\n<!-- AI RAIL PROJECT MEMORY END -->"
     install_fake_gh(tmp_path, monkeypatch, open_issues=[{"number": 1, "title": "Roadmap: Demo", "body": body, "updatedAt": "2026-01-01T00:00:00Z"}])
 
     result = run_cli(tmp_path, "import")
@@ -836,7 +897,7 @@ def test_import_appends_managed_block_after_human_notes_without_markers(tmp_path
     text = project.read_text(encoding="utf-8")
     assert "This app handles invoices." in text
     assert "AI RAIL MANAGED ROADMAP START" in text
-    assert "- [ ] #2 Build invoices" in text
+    assert "- [ ] P1-T01 | #2 | Build invoices" in text
 
 
 def test_next_does_not_import_and_warns_on_placeholders(tmp_path: Path, monkeypatch) -> None:
@@ -989,15 +1050,17 @@ def test_ship_marks_project_task_complete(tmp_path: Path) -> None:
     state = tmp_path / ".rail" / "state"
     state.mkdir()
     (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
-    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] P1-T01 | #2 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync", "--no-merge")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
-    assert "- [x] #2 | P1-T01 | Build thing" in text
+    assert "- [x] P1-T01 | #2 | Build thing" in text
     assert "Status: active" in text
     assert "Updated .rail/PROJECT.md for completed issue" in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
 
 
 def test_ship_ignores_loose_project_roadmap_prose(tmp_path: Path) -> None:
@@ -1012,12 +1075,14 @@ def test_ship_ignores_loose_project_roadmap_prose(tmp_path: Path) -> None:
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync", "--no-merge")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     text = project.read_text(encoding="utf-8")
     assert "- [x] #2" not in text
     assert "No matching roadmap task found for issue #2." in result.stdout
     assert "PROJECT.md was left unchanged." in result.stdout
     assert "Updated .rail/PROJECT.md for completed issue" not in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
 
 
 def test_phase_progress_parser_supports_task_id_first_roadmap_tasks() -> None:
@@ -1056,9 +1121,11 @@ def test_ship_marks_task_id_first_issue_line_complete(tmp_path: Path) -> None:
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync", "--no-merge")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     after = project.read_text(encoding="utf-8")
     assert after == before.replace("- [ ] P4-T13", "- [x] P4-T13")
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
 
 
 def test_ship_marks_task_id_first_tbd_line_when_active_issue_mentions_task_id(tmp_path: Path) -> None:
@@ -1074,9 +1141,11 @@ def test_ship_marks_task_id_first_tbd_line_when_active_issue_mentions_task_id(tm
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync", "--no-merge")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     after = project.read_text(encoding="utf-8")
     assert after == before.replace("- [ ] P4-T13", "- [x] P4-T13")
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
 
 
 def test_ship_leaves_project_unchanged_when_no_safe_roadmap_match(tmp_path: Path) -> None:
@@ -1092,10 +1161,12 @@ def test_ship_leaves_project_unchanged_when_no_safe_roadmap_match(tmp_path: Path
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync", "--no-merge")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert project.read_text(encoding="utf-8") == before
     assert "No matching roadmap task found for issue #15." in result.stdout
     assert "PROJECT.md was left unchanged." in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
 
 
 def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path) -> None:
@@ -1106,7 +1177,7 @@ def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path)
         "import sys\n"
         "cmd = sys.argv[1]\n"
         "Path('.rail/calls.txt').open('a', encoding='utf-8').write(cmd + '\\n')\n"
-        "if cmd == 'commit' and '- [x] #2 | P1-T01 | Build thing' not in Path('.rail/PROJECT.md').read_text(encoding='utf-8'):\n"
+        "if cmd == 'commit' and '- [x] P1-T01 | #2 | Build thing' not in Path('.rail/PROJECT.md').read_text(encoding='utf-8'):\n"
         "    print('project not marked before commit')\n"
         "    raise SystemExit(2)\n"
         "print('fake ' + cmd)\n"
@@ -1116,15 +1187,17 @@ def test_ship_default_path_marks_project_before_commit_and_syncs(tmp_path: Path)
     state = tmp_path / ".rail" / "state"
     state.mkdir()
     (state / "active.json").write_text(json.dumps({"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}), encoding="utf-8")
-    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] P1-T01 | #2 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-merge")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     calls = (tmp_path / ".rail" / "calls.txt").read_text(encoding="utf-8").splitlines()
-    assert calls == ["checks", "commit", "issue-close", "done", "sync"]
+    assert calls == ["checks", "commit"]
     assert calls.count("commit") == 1
-    assert "- [x] #2 | P1-T01 | Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "- [x] P1-T01 | #2 | Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "rail ship --no-merge did not integrate this issue branch into the default branch." in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
 
 
 def test_ship_restores_project_memory_when_commit_fails(tmp_path: Path) -> None:
@@ -1164,8 +1237,9 @@ def test_ship_does_not_fail_if_project_update_fails(tmp_path: Path) -> None:
 
     result = run_cli(tmp_path, "ship", "test: ship", "--no-push", "--no-sync", "--no-merge")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "Could not update .rail/PROJECT.md before ship" in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
 
 
 def install_local_issue_close_runtime_wrapper(path: Path) -> None:
@@ -1220,6 +1294,23 @@ def test_ship_merges_issue_branch_to_default_before_closing(tmp_path: Path, monk
     remote_log = subprocess.run(["git", f"--git-dir={bare}", "log", "--oneline", default_branch], capture_output=True, text=True, check=True)
     assert "test: integrate issue" in remote_log.stdout
     assert result.stdout.index("Integrating `issue-1-work`") < result.stdout.index("Closed issue #1")
+
+
+def test_ship_no_push_merges_locally_but_keeps_issue_open_and_active(tmp_path: Path, monkeypatch) -> None:
+    default_branch, bare = setup_tracked_rail_remote_repo(tmp_path)
+    (tmp_path / "app.txt").write_text("local merge only\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "ship", "test: local merge only", "--force", "--no-push")
+
+    assert result.returncode == 1, result.stderr + result.stdout
+    assert "Default branch was merged locally but not pushed." in result.stdout
+    assert "Closed issue #1" not in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
+    assert git_current_branch(tmp_path) == default_branch
+    default_log = subprocess.run(["git", "log", "--oneline", default_branch], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "test: local merge only" in default_log.stdout
+    remote_log = subprocess.run(["git", f"--git-dir={bare}", "log", "--oneline", default_branch], capture_output=True, text=True, check=True)
+    assert "test: local merge only" not in remote_log.stdout
 
 
 def test_ship_does_not_close_or_clear_active_when_default_merge_fails(tmp_path: Path, monkeypatch) -> None:
@@ -1300,10 +1391,12 @@ def test_ship_no_merge_keeps_branch_only_behavior_and_warns(tmp_path: Path, monk
 
     result = run_cli(tmp_path, "ship", "test: branch only", "--force", "--no-merge", "--no-sync")
 
-    assert result.returncode == 0, result.stderr + result.stdout
-    assert "did not integrate this issue branch into the default branch" in result.stdout
-    assert "Branch-only ship path complete" in result.stdout
-    assert "Closed issue #1" in result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
+    assert "issue was not closed and active state was kept" in result.stdout
+    assert "merge and push" in result.stdout
+    assert "Closed issue #1" not in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
     assert git_current_branch(tmp_path) == "issue-1-work"
     default_log = subprocess.run(["git", "log", "--oneline", default_branch], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert "test: branch only" not in default_log.stdout
@@ -1718,9 +1811,10 @@ def test_ship_after_fresh_verify_does_not_rerun_checks(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: verified ship")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "[rail] Verified snapshot is fresh." in result.stdout
     assert "Checks already passed in last verify. Skipping recheck." in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     assert "Running check 1/1" not in result.stdout
     assert (tmp_path / "check-count.txt").read_text(encoding="utf-8").splitlines() == ["x"]
     log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
@@ -1758,15 +1852,17 @@ def test_ship_includes_own_project_completion_update_after_verify(tmp_path: Path
     state = tmp_path / ".rail" / "state"
     active = {"issue": {"number": 2, "title": "Build thing", "body": "", "url": ""}, "interaction_model": "codex"}
     (state / "active.json").write_text(json.dumps(active), encoding="utf-8")
-    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] #2 | P1-T01 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
+    (tmp_path / ".rail" / "PROJECT.md").write_text("<!-- AI RAIL ROADMAP START -->\n\n## Phase P1 - Foundation\nStatus: active\n\n### Tasks\n- [ ] P1-T01 | #2 | Build thing\n\n<!-- AI RAIL ROADMAP END -->\n", encoding="utf-8")
     (tmp_path / "app.txt").write_text("hello\n", encoding="utf-8")
     assert run_cli(tmp_path, "verify").returncode == 0
 
     result = run_cli(tmp_path, "ship", "test: project complete", "--no-push", "--no-close", "--no-done", "--no-sync")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "Updating .rail/PROJECT.md for completed issue #2." in result.stdout
-    assert "- [x] #2 | P1-T01 | Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "- [x] P1-T01 | #2 | Build thing" in (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
+    assert (tmp_path / ".rail" / "state" / "active.json").exists()
     show = subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert ".rail/PROJECT.md" in show.stdout
 
@@ -1784,8 +1880,9 @@ def test_ship_recheck_reruns_checks_with_fresh_verify(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: verified recheck", "--recheck")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "Running check 1/1" in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     assert (tmp_path / "check-count.txt").read_text(encoding="utf-8").splitlines() == ["x", "x"]
 
 
@@ -1808,9 +1905,10 @@ def test_ship_auto_runs_checks_when_checks_are_missing(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: missing checks")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "Last checks are missing. Running checks now..." in result.stdout
     assert "Checks passed. Continuing ship." in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert "test: missing checks" in log.stdout
 
@@ -1826,9 +1924,10 @@ def test_ship_auto_runs_checks_when_checks_are_stale(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: stale checks")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "Last checks are stale. Running checks now..." in result.stdout
     assert "Checks passed. Continuing ship." in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert "test: stale checks" in log.stdout
 
@@ -1846,9 +1945,10 @@ def test_ship_auto_runs_checks_when_last_checks_failed(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: rerun failed checks")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "Last checks are failed. Running checks now..." in result.stdout
     assert "Checks passed. Continuing ship." in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert "test: rerun failed checks" in log.stdout
 
@@ -1868,10 +1968,11 @@ def test_ship_recovers_from_missing_npm_check_script(tmp_path: Path, monkeypatch
 
     result = ship_without_remote(tmp_path, "test: recover npm check")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "[rail] Configured check `npm run check` is not available." in result.stdout
     assert "[rail] Found available project check: `npm run typecheck`." in result.stdout
     assert "[rail] Running replacement check now..." in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     assert (tmp_path / ".rail" / "npm-runs.txt").read_text(encoding="utf-8").splitlines() == ["typecheck"]
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert cfg["checks"] == ["npm run typecheck"]
@@ -1991,9 +2092,10 @@ def test_ship_force_does_not_auto_rerun_failed_checks(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: forced ship", "--force")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "Running checks now" not in result.stdout
     assert "Warning: --force skips commit safety checks." in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert "test: forced ship" in log.stdout
 
@@ -2005,8 +2107,9 @@ def test_ship_allows_missing_checks_override(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: allow missing checks", "--allow-missing-checks")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "continuing because --allow-missing-checks was used" in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert "test: allow missing checks" in log.stdout
 
@@ -2022,13 +2125,14 @@ def test_ship_allows_stale_checks_override(tmp_path: Path) -> None:
 
     result = ship_without_remote(tmp_path, "test: allow stale checks", "--allow-stale")
 
-    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.returncode == 1, result.stderr + result.stdout
     assert "continuing because --allow-stale was used" in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
     log = subprocess.run(["git", "log", "--oneline", "-1"], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert "test: allow stale checks" in log.stdout
 
 
-def test_ship_reports_partial_state_when_issue_close_fails(tmp_path: Path) -> None:
+def test_ship_no_sync_stops_before_issue_close_and_keeps_active_state(tmp_path: Path) -> None:
     rail = tmp_path / ".rail" / "rail.py"
     rail.parent.mkdir()
     rail.write_text(
@@ -2043,10 +2147,10 @@ def test_ship_reports_partial_state_when_issue_close_fails(tmp_path: Path) -> No
 
     assert result.returncode == 1
     assert "fake commit" in result.stdout
-    assert "fake issue-close" in result.stdout
-    assert "Ship stopped after commit succeeded; issue close failed." in result.stdout
-    assert "Active state was kept." in result.stdout
-    assert "Recovery: manually close the GitHub issue or fix `gh auth login`, then run: rail done && rail sync" in result.stdout
+    assert "fake issue-close" not in result.stdout
+    assert "Ship paused: --no-sync prevented default-branch integration." in result.stdout
+    assert "issue was not closed and active state was kept" in result.stdout
+    assert "merge and push" in result.stdout
 
 
 def test_local_runtime_version_matches_public_alpha(tmp_path: Path) -> None:
@@ -2289,8 +2393,8 @@ def test_pyproject_has_professional_author_and_project_urls() -> None:
     assert 'authors = [{ name = "Afshin Saberi" }]' in pyproject
     assert 'Homepage = "https://github.com/afshinsb/ai-rail"' in pyproject
     assert 'Repository = "https://github.com/afshinsb/ai-rail"' in pyproject
-    assert 'Documentation = "https://github.com/afshinsb/ai-rail/tree/main/docs"' in pyproject
-    assert 'Changelog = "https://github.com/afshinsb/ai-rail/blob/main/CHANGELOG.md"' in pyproject
+    assert 'Documentation = "https://github.com/afshinsb/ai-rail/tree/master/docs"' in pyproject
+    assert 'Changelog = "https://github.com/afshinsb/ai-rail/blob/master/CHANGELOG.md"' in pyproject
     assert '"Bug Tracker" = "https://github.com/afshinsb/ai-rail/issues"' in pyproject
 
 

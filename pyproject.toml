@@ -26,8 +26,8 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/afshinsb/ai-rail"
 Repository = "https://github.com/afshinsb/ai-rail"
-Documentation = "https://github.com/afshinsb/ai-rail/tree/main/docs"
-Changelog = "https://github.com/afshinsb/ai-rail/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/afshinsb/ai-rail/tree/master/docs"
+Changelog = "https://github.com/afshinsb/ai-rail/blob/master/CHANGELOG.md"
 "Bug Tracker" = "https://github.com/afshinsb/ai-rail/issues"
 
 [project.scripts]

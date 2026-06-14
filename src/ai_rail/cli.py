@@ -48,6 +48,15 @@ PRESERVED_TEMPLATE_DIRS = {
     Path(".rail/prompts"),
 }
 TEMPLATE_CONFIG = Path(".rail/config.json")
+UPGRADE_PROTECTED_FILES = {
+    Path(".rail/PROJECT.md"),
+    Path(".rail/AGENTS.md"),
+    Path(".rail/CLAUDE.md"),
+    Path(".rail/AIDER.md"),
+    Path(".rail/CHATGPT.md"),
+    Path(".rail/CODEX.md"),
+    Path(".rail/AI_CONTRACT.md"),
+}
 REMOTE_MEMORY_START = "<!-- AI RAIL PROJECT MEMORY START -->"
 REMOTE_MEMORY_END = "<!-- AI RAIL PROJECT MEMORY END -->"
 LOCAL_ROADMAP_START = "<!-- AI RAIL MANAGED ROADMAP START -->"
@@ -282,10 +291,6 @@ def can_update_stale_default_node_check(checks: list[Any], failed_command: str, 
     )
 
 
-def checks_for_stack(stack: str) -> list[str]:
-    return detect_checks()
-
-
 def pytest_likely_configured() -> bool:
     if (root() / "tests").is_dir():
         return True
@@ -308,11 +313,10 @@ def is_unconfigured_checks(value: Any) -> bool:
         return True
     if value == []:
         return True
+    detected_checks = detect_checks()
     default_checks = [
         ["npm run check"],
-        checks_for_stack("node"),
-        checks_for_stack("python"),
-        checks_for_stack("static"),
+        detected_checks,
     ]
     return isinstance(value, list) and value in default_checks
 
@@ -528,10 +532,15 @@ def print_rail_untracked_pause() -> None:
     rail_print(f"{rail_icon('tip')} Recommended next action: commit `.rail/` on the default branch, then rerun rail ship.")
 
 
-def print_merge_conflict_pause() -> None:
+def print_merge_conflict_pause(issue_branch: str, default_branch: str, *, issue_branch_pushed: bool) -> None:
+    push_state = "pushed to origin" if issue_branch_pushed else "committed locally but not pushed because --no-push was used"
     rail_print(f"{rail_icon('warning')} Ship paused: merge into default branch has conflicts.")
-    rail_print(f"{rail_icon('info')} Issue branch was committed and pushed, but the issue was not closed.")
-    rail_print(f"{rail_icon('tip')} Resolve conflicts, run checks, then rerun rail ship or finish manually.")
+    rail_print(f"{rail_icon('warning')} Ship paused: merging issue branch `{issue_branch}` into default branch `{default_branch}` has conflicts.")
+    rail_print(f"{rail_icon('info')} Issue branch state: {push_state}.")
+    rail_print(f"{rail_icon('info')} GitHub issue is still open, and active state was preserved.")
+    rail_print(f"{rail_icon('info')} `.rail/PROJECT.md` may already be marked `[x]` for this issue on `{issue_branch}`.")
+    rail_print(f"{rail_icon('tip')} Resolve path: fix conflicts, run focused checks, `git add ...`, `git commit`, `git push origin {default_branch}`, then `rail issue-close --commit && rail done && rail sync`.")
+    rail_print(f"{rail_icon('tip')} Abort path: `git merge --abort`, then `git checkout {issue_branch}` to return to the issue branch.")
 
 
 def print_no_merge_warning() -> None:
@@ -597,7 +606,10 @@ def delegate(args: list[str], *, stream: bool = False) -> int:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            proc.kill()
+            print("Failed to stream .rail/rail.py output.", file=sys.stderr)
+            return 1
         for line in proc.stdout:
             print(rewrite_core_output(line), end="")
         return proc.wait(timeout=300)
@@ -635,13 +647,20 @@ def backup_file(path: Path) -> Path:
         i += 1
 
 
-def install_template(src: Path, dst: Path, force: bool = False) -> dict[str, Any]:
+def install_template(
+    src: Path,
+    dst: Path,
+    force: bool = False,
+    preserve_existing_files: set[Path] | None = None,
+) -> dict[str, Any]:
     preserved_existing_dirs = {rel for rel in PRESERVED_TEMPLATE_DIRS if (dst / rel).exists()}
+    protected_files = preserve_existing_files or set()
     summary: dict[str, Any] = {
         "created": 0,
         "updated": 0,
         "skipped": 0,
         "preserved_dirs": sorted(str(path).replace("\\", "/") for path in preserved_existing_dirs),
+        "preserved_files": [],
         "config": "created",
         "config_backup": None,
         "config_updates": [],
@@ -655,6 +674,10 @@ def install_template(src: Path, dst: Path, force: bool = False) -> dict[str, Any
             continue
         if any(is_relative_to_path(rel, preserved) for preserved in preserved_existing_dirs):
             summary["skipped"] += 1
+            continue
+        if rel in protected_files and target.exists():
+            summary["skipped"] += 1
+            summary["preserved_files"].append(str(rel).replace("\\", "/"))
             continue
         if rel == TEMPLATE_CONFIG and target.exists():
             try:
@@ -694,6 +717,8 @@ def print_install_summary(summary: dict[str, Any]) -> None:
         print("- Updated placeholder config values: " + ", ".join(summary["config_updates"]))
     for preserved in summary["preserved_dirs"]:
         print(f"- Preserved {preserved}/")
+    if summary["preserved_files"]:
+        print("- Preserved protected project/user files: " + ", ".join(summary["preserved_files"]))
 
 
 def cmd_init(argv: list[str]) -> int:
@@ -744,14 +769,35 @@ def cmd_init(argv: list[str]) -> int:
 
 def cmd_upgrade(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="rail upgrade")
-    parser.parse_args(argv)
+    parser.add_argument("--refresh-config", action="store_true", help="Re-detect safe config defaults while upgrading.")
+    ns = parser.parse_args(argv)
 
     if not rail_dir().exists():
         print("No .rail folder found. Run: rail init", file=sys.stderr)
         return 1
 
+    cfg_path = rail_dir() / "config.json"
+    had_config = cfg_path.exists()
     template_path = resources.files("ai_rail") / "template"
-    summary = install_template(Path(str(template_path)), root(), force=True)
+    summary = install_template(
+        Path(str(template_path)),
+        root(),
+        force=True,
+        preserve_existing_files=UPGRADE_PROTECTED_FILES,
+    )
+
+    config_preserved: list[str] = []
+    if ns.refresh_config:
+        cfg = read_json(cfg_path, {})
+        had_valid_config = had_config and summary["config"] == "preserved"
+        cfg, config_updates, config_preserved = apply_detected_init_config(
+            cfg,
+            had_valid_config=had_valid_config,
+            project_name_arg=None,
+        )
+        summary["config_updates"] = config_updates
+        if summary["config"] in {"created", "replaced"} or config_updates:
+            write_json(cfg_path, cfg)
 
     try:
         local_py().chmod(local_py().stat().st_mode | 0o111)
@@ -759,6 +805,8 @@ def cmd_upgrade(argv: list[str]) -> int:
         pass
 
     print(f"Upgraded AI Rail local runtime/template files to v{VERSION}.")
+    if config_preserved:
+        print("Preserved config values: " + ", ".join(config_preserved))
     print_install_summary(summary)
     return 0
 
@@ -1081,7 +1129,7 @@ Roadmap needs a Rail-readable phase goal.
 - Replace this fallback block via rail phase --copy and rail import.
 
 ### Tasks
-- [ ] TBD | P1-T01 | Replace fallback roadmap with Rail-readable tasks
+- [ ] P1-T01 | TBD | Replace fallback roadmap with Rail-readable tasks
 
 {RAIL_ROADMAP_END}"""
 
@@ -1218,17 +1266,23 @@ def validate_rail_roadmap(text: str) -> list[str]:
     task_ids: set[str] = set()
     issues: set[str] = set()
     saw_phase = False
+    current_phase: str | None = None
+    active_phases: list[str] = []
     for line in inner.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        if RAIL_PHASE_RE.match(stripped):
+        phase_match = RAIL_PHASE_RE.match(stripped)
+        if phase_match:
             saw_phase = True
+            current_phase = phase_match.group("phase")
             continue
         if stripped.startswith("Status:"):
             status = stripped.split(":", 1)[1].strip()
             if status not in RAIL_PHASE_STATUSES:
                 warnings.append(f"PROJECT.md roadmap has invalid phase status `{status}`.")
+            elif status == "active" and current_phase:
+                active_phases.append(current_phase)
             continue
         if stripped.startswith("- ["):
             task = parse_roadmap_task_line(stripped)
@@ -1246,6 +1300,8 @@ def validate_rail_roadmap(text: str) -> list[str]:
                 issues.add(issue)
     if not saw_phase:
         warnings.append("PROJECT.md roadmap has no `## Phase Pn` sections.")
+    if len(active_phases) > 1:
+        warnings.append("PROJECT.md roadmap has multiple active phases: " + ", ".join(active_phases) + ".")
     return warnings
 
 
@@ -1310,6 +1366,15 @@ def is_placeholder_project_memory(text: str) -> bool:
     return not remainder.strip()
 
 
+def backup_project_memory_before_replacement(path: Path) -> None:
+    if not path.exists() or not path.is_file():
+        return
+    backup = path.with_name(path.name + ".rail.bak")
+    shutil.copy2(path, backup)
+    backup_rel = str(backup.relative_to(root())).replace("\\", "/")
+    print(f"[rail] Backed up .rail/PROJECT.md to {backup_rel}")
+
+
 def update_local_project_memory(managed: str) -> None:
     path = rail_dir() / "PROJECT.md"
     managed, warnings = ensure_strict_roadmap(managed)
@@ -1321,6 +1386,7 @@ def update_local_project_memory(managed: str) -> None:
         return
     existing = path.read_text(encoding="utf-8", errors="replace")
     if is_placeholder_project_memory(existing) or ("CHANGE_ME:" in existing and "## Roadmap maintenance rules" in existing and RAIL_ROADMAP_START in existing):
+        backup_project_memory_before_replacement(path)
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
@@ -1479,7 +1545,7 @@ def integrate_issue_branch_into_default(issue_branch: str, *, push: bool) -> int
     merge = run(["git", "merge", "--no-ff", issue_branch, "-m", f"Merge {issue_branch}"], timeout=120)
     if merge.returncode != 0:
         print(merge.stderr.strip() or merge.stdout.strip())
-        print_merge_conflict_pause()
+        print_merge_conflict_pause(issue_branch, default_branch, issue_branch_pushed=push)
         return merge.returncode or 1
     if merge.stdout.strip() or merge.stderr.strip():
         print(merge.stdout.strip() or merge.stderr.strip())
@@ -1592,7 +1658,17 @@ def cmd_import(argv: list[str]) -> int:
             return 1
         closed_issues = fetch_github_issues(repo, "closed")
         remote_block = extract_remote_memory(str(roadmap.get("body") or ""))
-        managed = remote_block or render_managed_roadmap_from_issue(roadmap, open_issues, closed_issues)
+        if remote_block is None:
+            print("Import failed: roadmap issue has no managed AI Rail project memory block.", file=sys.stderr)
+            print(f"Update the GitHub roadmap issue with exactly one valid strict {RAIL_ROADMAP_START} / {RAIL_ROADMAP_END} block, then run rail import again.", file=sys.stderr)
+            return 1
+        strict_blocks = extract_strict_roadmap_blocks(remote_block)
+        if len(strict_blocks) != 1:
+            count = "no" if not strict_blocks else f"{len(strict_blocks)}"
+            print(f"Import failed: managed roadmap memory contains {count} strict AI RAIL ROADMAP blocks; expected exactly one.", file=sys.stderr)
+            print(f"Update the GitHub roadmap issue with exactly one valid strict {RAIL_ROADMAP_START} / {RAIL_ROADMAP_END} block, then run rail import again.", file=sys.stderr)
+            return 1
+        managed = remote_block
         update_local_project_memory(managed)
     except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
         print(f"Import failed: {exc}", file=sys.stderr)
@@ -1665,7 +1741,7 @@ def cmd_ship(argv: list[str]) -> int:
     parser.add_argument("--recheck", action="store_true", help="Rerun checks even when the last verify snapshot is fresh.")
     parser.add_argument("--no-close", action="store_true", help="Do not close the active GitHub issue.")
     parser.add_argument("--no-done", action="store_true", help="Do not clear the active AI Rail state.")
-    parser.add_argument("--no-sync", action="store_true", help="Do not switch back to the default branch and pull.")
+    parser.add_argument("--no-sync", action="store_true", help="Pause after committing; do not integrate, close, or clear active state.")
     parser.add_argument("--no-merge", action="store_true", help="Advanced/manual: do not merge the issue branch into the default branch.")
     parser.add_argument("--keep-active", action="store_true", help="Keep active issue when running done.")
     ns = parser.parse_args(argv)
@@ -1772,6 +1848,8 @@ def cmd_ship(argv: list[str]) -> int:
     append_flag(commit_args, ns.allow_stale, "--allow-stale")
 
     rail_print(f"{rail_icon('info')} Committing...")
+    head_before_commit = run(["git", "rev-parse", "HEAD"], timeout=15)
+    head_before = head_before_commit.stdout.strip() if head_before_commit.returncode == 0 else None
     rc = delegate(commit_args)
     if rc != 0:
         if active_before_ship:
@@ -1787,20 +1865,39 @@ def cmd_ship(argv: list[str]) -> int:
                 print(f"[rail] Warning: could not restore .rail/PROJECT.md after ship commit failed: {exc}")
         rail_print(f"{rail_icon('error')} Ship stopped during commit; no later ship steps ran.")
         return rc
+    head_after_commit = run(["git", "rev-parse", "HEAD"], timeout=15)
+    head_after = head_after_commit.stdout.strip() if head_after_commit.returncode == 0 else None
+    if head_before and head_after and head_before == head_after:
+        rail_print(f"{rail_icon('warning')} No new commit was created, so ship is paused.")
+        rail_print(f"{rail_icon('info')} Issue was not closed, and active state was kept.")
+        return 1
 
     issue_branch = current_branch()
+    if ns.no_sync:
+        default_branch = cfg().get("default_branch", "main")
+        rail_print(f"{rail_icon('warning')} Ship paused: --no-sync prevented default-branch integration.")
+        rail_print(f"{rail_icon('info')} Issue branch `{issue_branch}` was committed, but the issue was not closed and active state was kept.")
+        rail_print(f"{rail_icon('tip')} Next: merge and push `{issue_branch}` into `{default_branch}`, then run `rail issue-close --commit && rail done && rail sync`.")
+        return 1
     if ns.no_merge:
         print_no_merge_warning()
-    elif ns.no_sync:
-        rail_print(f"{rail_icon('warning')} Ship paused: --no-sync prevents default-branch integration.")
-        rail_print(f"{rail_icon('info')} Issue branch was committed, but the issue was not closed by default.")
-        if not ns.no_close or (not ns.no_done and not ns.keep_active):
-            rail_print(f"{rail_icon('tip')} Use `rail ship --no-merge` only if you intentionally want the old branch-only behavior.")
-            return 1
+        rail_print(f"{rail_icon('info')} Issue was not closed, and active state was kept.")
+        rail_print(f"{rail_icon('tip')} Next: merge and push `{issue_branch}` into the default branch before closing or marking done.")
+        return 1
     else:
+        default_branch = cfg().get("default_branch", "main")
+        if issue_branch == default_branch:
+            rail_print(f"{rail_icon('error')} Ship expects an issue branch, but you are already on the default branch `{default_branch}`.")
+            rail_print(f"{rail_icon('info')} Issue was not closed, and active state was kept.")
+            return 1
         rc = integrate_issue_branch_into_default(issue_branch, push=not ns.no_push)
         if rc != 0:
             return rc
+        if ns.no_push:
+            rail_print(f"{rail_icon('warning')} Default branch was merged locally but not pushed.")
+            rail_print(f"{rail_icon('info')} Issue was not closed, and active state was kept.")
+            rail_print(f"{rail_icon('tip')} Next: inspect `{default_branch}`, push it with `git push origin {default_branch}`, then run `rail issue-close --commit && rail done && rail sync`.")
+            return 1
 
     if not ns.no_close:
         rc = delegate(["issue-close", "--commit"])
@@ -1822,19 +1919,8 @@ def cmd_ship(argv: list[str]) -> int:
             rail_print(f"{rail_icon('warning')} Ship stopped after commit and issue-close succeeded; done failed.")
             return rc
 
-    if ns.no_merge and not ns.no_sync:
-        rc = delegate(["sync"])
-        if rc != 0:
-            rail_print(f"{rail_icon('warning')} Ship stopped after commit, issue-close, and done succeeded; sync failed.")
-            return rc
-
     print_ship_phase_progress()
-    if ns.no_merge:
-        rail_print(f"{rail_icon('warning')} Branch-only ship path complete; default branch was not integrated.")
-    elif ns.no_sync:
-        rail_print(f"{rail_icon('warning')} Ship commit complete; default branch was not integrated.")
-    else:
-        rail_print(f"{rail_icon('success')} Ship complete.")
+    rail_print(f"{rail_icon('success')} Ship complete.")
     rail_print(f"{rail_icon('tip')} Recommended next action: rail phase --copy")
     return 0
 
@@ -1897,17 +1983,18 @@ Plain text phase goal.
 - Plain text criterion.
 
 ### Tasks
-- [ ] #123 | P1-T01 | Existing active issue title
-- [ ] TBD | P1-T02 | Future task title
+- [ ] P1-T01 | #123 | Existing active issue title
+- [ ] P1-T02 | TBD | Future task title
 
 {RAIL_ROADMAP_END}
 
 Strict roadmap rules:
 - Every task line must use exactly one of these forms:
-  `- [ ] ISSUE | TASK_ID | TITLE`
-  `- [x] ISSUE | TASK_ID | TITLE`
-- `ISSUE` must be `#N` for GitHub issues that exist or `TBD` for future tasks not yet created.
+  `- [ ] TASK_ID | ISSUE | TITLE`
+  `- [x] TASK_ID | ISSUE | TITLE`
 - `TASK_ID` must look like `P1-T01`, `P2-T03`, and be unique.
+- `ISSUE` must be `#N` for GitHub issues that exist or `TBD` for future tasks not yet created.
+- Legacy issue-first task lines are still accepted by Rail, but new roadmap text should use task-id-first.
 - Phase `Status:` must be one of `planned`, `active`, `complete`, or `blocked`.
 - Use checkboxes for every task.
 - Do not use numbered lists for task status inside the strict block.
@@ -1954,11 +2041,12 @@ Structure the roadmap into phases. Example phase styles:
 
 Do not force those exact phase names; choose phases that fit this repo.
 
-Create only the first active execution slice as implementation-ready GitHub Issues:
+Create all issues for the first active execution slice/current phase as implementation-ready GitHub Issues:
 - usually 3-10 right-sized implementation issues
+- do not stop after creating one issue unless the phase truly has one task or GitHub/API failure blocks more
 - do not create GitHub issues for the entire long-term roadmap
 - assign `#N` issue refs in the strict roadmap block for issues you create
-- keep future tasks as `TBD | Pn-Txx | title`
+- keep future tasks as `Pn-Txx | TBD | title`
 - small enough for one focused coding-agent pass
 - big enough to be meaningful
 - not tiny/noisy micro-tasks
@@ -1967,6 +2055,8 @@ Create only the first active execution slice as implementation-ready GitHub Issu
 - each issue should produce a clear diff
 - avoid vague issues like "improve UI" or "refactor app"
 - prefer backbone/config/foundation fixes before polish
+- if GitHub blocks long issue bodies, create shorter issue bodies but still create issue shells and insert `#N` refs
+- if not all active-slice issues are created, list which tasks remain `TBD` and why
 
 Each implementation issue must include this body template:
 
@@ -2050,9 +2140,10 @@ Do not leave stale phase/task sections.
 Do not include `CHANGE_ME`.
 Inside it, preserve and update exactly one strict `{RAIL_ROADMAP_START}` / `{RAIL_ROADMAP_END}` block.
 Every task line in that block must stay exactly one of these forms:
-`- [ ] ISSUE | TASK_ID | TITLE`
-`- [x] ISSUE | TASK_ID | TITLE`
+`- [ ] TASK_ID | ISSUE | TITLE`
+`- [x] TASK_ID | ISSUE | TITLE`
 Use `#N` for existing GitHub issues and `TBD` for future tasks not yet created.
+Legacy issue-first task lines are still accepted by Rail, but new roadmap text should use task-id-first.
 Use phase statuses only from: planned, active, complete, blocked.
 Do not use numbered lists for task status.
 Do not invent alternate task structures.
@@ -2089,15 +2180,19 @@ If the phase is complete:
 - update phase `Status:` lines in the strict roadmap block
 - update completed work, current phase, next recommended issue, and blockers/postponed work in the roadmap issue memory block
 - mark or recommend the phase as complete in the GitHub roadmap issue
-- recommend or create only the next active execution slice for the next phase
+- recommend or create all issues for the next active execution slice/current phase
+- usually create 3-10 right-sized implementation issues
+- do not stop after creating one issue unless the slice truly has one task or GitHub/API failure blocks more
 - keep new issues right-sized for coding agents
 
 If the phase is not complete:
 - list remaining blockers
 - create or update only scoped blocker issues
-- replace `TBD` with issue numbers when you create the next active execution slice
-- add future tasks only as `- [ ] TBD | Pn-Txx | title`
+- replace `TBD` with issue numbers when you create all issues for the next active execution slice/current phase
+- add future tasks only as `- [ ] Pn-Txx | TBD | title`
 - do not start the next phase yet
+- if GitHub blocks long issue bodies, create shorter issue bodies but still create issue shells and insert `#N` refs
+- if not all active-slice issues are created, list which tasks remain `TBD` and why
 
 Review upcoming phases and decide whether the roadmap is still correct. If it is off-track, update upcoming phases in the GitHub roadmap issue, then clearly tell the user what changed and why.
 

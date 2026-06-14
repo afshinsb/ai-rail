@@ -6,13 +6,13 @@ AI Rail supports one daily loop and three interaction models. The short commands
 
 `.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
-Roadmap task state lives in exactly one strict `AI RAIL ROADMAP START/END` block inside `.rail/PROJECT.md`. Rail only marks tasks complete inside that block. Future tasks use `TBD | Pn-Txx | title`; the phase AI creates the next issue slice and replaces `TBD` with issue numbers when those GitHub issues exist.
+Roadmap task state lives in exactly one strict `AI RAIL ROADMAP START/END` block inside `.rail/PROJECT.md`. Rail only marks tasks complete inside that block. Future tasks use `Pn-Txx | TBD | title`; the phase AI creates the next issue slice and replaces `TBD` with issue numbers when those GitHub issues exist.
 
-Use `rail plan --copy` before the first coding issue exists. Paste it into a GitHub-connected AI agent so it can audit the repo, create or update one phased roadmap issue, and create only the first active execution slice as scoped GitHub Issues. Then run `rail import` to import the roadmap issue into `.rail/PROJECT.md`.
+Use `rail plan --copy` before the first coding issue exists. Paste it into a GitHub-connected AI agent so it can audit the repo, create or update one phased roadmap issue, and create all issues for the first active execution slice. Then run `rail import` to import the roadmap issue into `.rail/PROJECT.md`.
 
 Use `rail next --copy` after issues exist. It still starts one issue at a time and generates the coding-agent prompt for that single issue.
 
-After `rail s`, AI Rail commits the issue branch, merges it into the configured default branch, pushes the default branch, closes the GitHub issue, and marks the shipped issue completed locally when it appears in `.rail/PROJECT.md`. After several issues have shipped, use `rail phase --copy` to audit the current roadmap phase. Phase audit is not coding: the planning AI updates the GitHub roadmap issue and creates only the next right-sized execution slice. Then run `rail import` again.
+After `rail s`, AI Rail commits the issue branch, merges it into the configured default branch, pushes the default branch, closes the GitHub issue, and marks the shipped issue completed locally when it appears in `.rail/PROJECT.md`. After several issues have shipped, use `rail phase --copy` to audit the current roadmap phase. Phase audit is not coding: the planning AI updates the GitHub roadmap issue and creates all issues for the next right-sized execution slice. Then run `rail import`, then `rail n`.
 
 ## Daily Loop
 
@@ -26,7 +26,7 @@ rail ship "type(scope): message"
 
 `rail verify` is the expensive gate: it captures review context, runs checks, and saves a verified snapshot. `rail ship` is the fast finalizer: it trusts that snapshot when the working tree still matches it, and only reruns checks when you pass `--recheck` or when legacy recovery is needed before a snapshot exists.
 
-`rail ship` closes the issue only after default-branch integration succeeds. If the merge conflicts, the issue remains open and active state remains so you can resolve conflicts, run checks, and rerun ship or finish manually. If `.rail/` is not tracked on the default branch, ship pauses before checkout/sync to avoid removing `.rail/rail.py` and breaking the local runtime. `rail ship --no-merge` is advanced/manual; it keeps branch-only behavior and does not integrate code into the default branch.
+`rail ship` closes the issue only after default-branch integration succeeds. If the merge conflicts, the issue remains open and active state remains so you can resolve conflicts, run checks, and finish manually. If `.rail/` is not tracked on the default branch, ship pauses before checkout/sync to avoid removing `.rail/rail.py` and breaking the local runtime. `--no-push`, `--no-sync`, and `--no-merge` are pause/manual modes; they do not close the issue or clear active state unless the default branch was integrated and pushed.
 
 Use `rail resume` before starting if you are returning to a repo after time away. Use `rail handoff --for chatgpt|codex|claude|cursor|aider --copy` when moving the task into another AI session.
 

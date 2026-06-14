@@ -122,7 +122,7 @@ rail plan --copy
 # paste into a GitHub-connected AI agent
 ```
 
-The AI creates or updates one GitHub roadmap issue as the remote roadmap mirror and creates only the first active execution slice as GitHub Issues.
+The AI creates or updates one GitHub roadmap issue as the remote roadmap mirror and creates all issues for the first active execution slice.
 
 ```bash
 rail import
@@ -150,7 +150,7 @@ rail phase --copy
 # paste into a GitHub-connected AI reviewer/agent
 ```
 
-The phase audit updates project memory, checks completed work against the roadmap, and adjusts upcoming phases when needed.
+The phase audit updates project memory, checks completed work against the roadmap, and creates all issues for the next active execution slice when needed.
 
 ```bash
 rail import
@@ -241,7 +241,7 @@ rail checks --run "npm run typecheck" --run "npm run lint"
 
 `.rail/PROJECT.md` is the full local project memory, roadmap brain, phase tracker, and next-task direction file. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
-`.rail/PROJECT.md` may contain human-readable context, but roadmap task state lives in exactly one `AI RAIL ROADMAP START/END` block. Rail only updates task status inside that strict block. Task lines use `- [ ] ISSUE | TASK_ID | TITLE`, where `ISSUE` is `#123` for active GitHub issues or `TBD` for future tasks. The phase AI creates the next issue slice and replaces `TBD` with issue numbers during `rail phase --copy` / `rail import`.
+`.rail/PROJECT.md` may contain human-readable context, but roadmap task state lives in exactly one `AI RAIL ROADMAP START/END` block. Rail only updates task status inside that strict block. Task lines use `- [ ] TASK_ID | ISSUE | TITLE`, where `TASK_ID` looks like `P1-T01` and `ISSUE` is `#123` for active GitHub issues or `TBD` for future tasks. The phase AI creates the next issue slice and replaces `TBD` with issue numbers during `rail phase --copy` / `rail import`.
 
 `rail snapshot` writes:
 
