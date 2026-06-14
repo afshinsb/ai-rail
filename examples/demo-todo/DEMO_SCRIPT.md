@@ -7,6 +7,7 @@ This is the public demo flow for AI Rail.
 ```bash
 pipx install ai-rail
 rail --version
+cd examples/demo-todo
 rail init --stack node --project-name "AI Rail Demo TODO"
 rail doctor
 npm run check

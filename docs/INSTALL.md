@@ -59,6 +59,6 @@ rail export
 
 ```bash
 python -m pytest -q
-python -m py_compile src/ai_rail/cli.py
+python -m py_compile src/ai_rail/*.py src/ai_rail/template/.rail/rail.py
 rail release-check
 ```

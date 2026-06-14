@@ -808,6 +808,51 @@ def test_import_extracts_managed_memory_and_writes_project(tmp_path: Path, monke
     assert "Closed issues: 1" in result.stdout
 
 
+def test_import_refuses_ambiguous_roadmap_issues_without_exact_title(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static", "--project-name", "Demo")
+    body = f"<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n{strict_roadmap_block()}\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(
+        tmp_path,
+        monkeypatch,
+        open_issues=[
+            {"number": 1, "title": "Roadmap: Temp", "body": body, "updatedAt": "2026-01-03T00:00:00Z"},
+            {"number": 2, "title": "Roadmap: Other", "body": body, "updatedAt": "2026-01-02T00:00:00Z"},
+        ],
+    )
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 1
+    assert "multiple open roadmap issues found and none matches `Roadmap: Demo functional MVP`" in result.stderr
+    assert "Close or rename old roadmap issues and rerun `rail import`." in result.stderr
+
+
+def test_import_prefers_exact_roadmap_title_when_multiple_exist(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
+    run_cli(tmp_path, "init", "--stack", "static", "--project-name", "Demo")
+    exact_body = f"<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n{strict_roadmap_block('- [ ] P1-T01 | #5 | Exact task')}\n<!-- AI RAIL PROJECT MEMORY END -->"
+    temp_body = f"<!-- AI RAIL PROJECT MEMORY START -->\n## Roadmap\n\n{strict_roadmap_block('- [ ] P1-T01 | #6 | Temp task')}\n<!-- AI RAIL PROJECT MEMORY END -->"
+    install_fake_gh(
+        tmp_path,
+        monkeypatch,
+        open_issues=[
+            {"number": 1, "title": "Roadmap: Temp", "body": temp_body, "updatedAt": "2026-01-03T00:00:00Z"},
+            {"number": 2, "title": "Roadmap: Demo functional MVP", "body": exact_body, "updatedAt": "2026-01-02T00:00:00Z"},
+        ],
+    )
+
+    result = run_cli(tmp_path, "import")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = (tmp_path / ".rail" / "PROJECT.md").read_text(encoding="utf-8")
+    assert "Exact task" in text
+    assert "Temp task" not in text
+    assert "Roadmap issue: #2 Roadmap: Demo functional MVP" in result.stdout
+
+
 def test_import_preserves_strict_roadmap_block(tmp_path: Path, monkeypatch) -> None:
     git_init(tmp_path)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:owner/project.git"], cwd=tmp_path, check=True)
@@ -906,6 +951,9 @@ def test_import_appends_managed_block_after_human_notes_without_markers(tmp_path
     assert "This app handles invoices." in text
     assert "AI RAIL MANAGED ROADMAP START" in text
     assert "- [ ] P1-T01 | #2 | Build invoices" in text
+    backup = tmp_path / ".rail" / "PROJECT.md.rail.bak.1"
+    assert backup.exists()
+    assert backup.read_text(encoding="utf-8") == "# Human project notes\n\nThis app handles invoices.\n"
 
 
 def test_next_does_not_import_and_warns_on_placeholders(tmp_path: Path, monkeypatch) -> None:
@@ -2257,7 +2305,7 @@ def test_local_runtime_version_matches_public_alpha(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert "AI Rail v0.1.0a15" in result.stdout
+    assert "AI Rail v0.1.0a16" in result.stdout
 
 
 
@@ -2452,13 +2500,14 @@ def test_phase6_release_check_passes_on_package_root() -> None:
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ready for alpha packaging" in result.stdout
     assert "docs/QUICKSTART.md" in result.stdout
+    assert "Python modules compile" in result.stdout
 
 
 def test_version_output_includes_author_and_repository() -> None:
     result = run_cli(ROOT, "--version")
 
     assert result.returncode == 0
-    assert "AI Rail 0.1.0a15" in result.stdout
+    assert "AI Rail 0.1.0a16" in result.stdout
     assert "Created by Afshin Saberi" in result.stdout
     assert "https://github.com/afshinsb/ai-rail" in result.stdout
 
@@ -2469,7 +2518,7 @@ def test_about_outputs_project_metadata() -> None:
     assert result.returncode == 0
     assert "AI Rail" in result.stdout
     assert "A local-first workflow rail and portable project brain for AI-assisted development." in result.stdout
-    assert "Version: 0.1.0a15" in result.stdout
+    assert "Version: 0.1.0a16" in result.stdout
     assert "Author: Afshin Saberi" in result.stdout
     assert "Repository: https://github.com/afshinsb/ai-rail" in result.stdout
     assert "Website: https://theafshin.com" in result.stdout

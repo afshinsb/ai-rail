@@ -16,10 +16,23 @@ RAIL_PHASE_RE = re.compile(r"^## Phase (?P<phase>P\d+)\b")
 RAIL_PHASE_STATUSES = {"planned", "active", "complete", "blocked"}
 
 
-def roadmap_issue_from_open_issues(open_issues: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
+def expected_roadmap_title(project_name: str) -> str:
+    return f"Roadmap: {project_name} functional MVP"
+
+
+def roadmap_issue_from_open_issues(open_issues: list[dict[str, Any]], expected_project_name: str | None = None) -> tuple[dict[str, Any] | None, bool]:
     roadmap = [item for item in open_issues if "roadmap:" in str(item.get("title", "")).lower()]
     if not roadmap:
         return None, False
+    if expected_project_name:
+        expected_title = expected_roadmap_title(expected_project_name)
+        exact = [item for item in roadmap if str(item.get("title", "")).strip() == expected_title]
+        if len(exact) == 1:
+            return exact[0], False
+        if len(exact) > 1:
+            raise RuntimeError(f"multiple open roadmap issues match `{expected_title}`. Close or rename old roadmap issues and rerun `rail import`.")
+        if len(roadmap) > 1:
+            raise RuntimeError(f"multiple open roadmap issues found and none matches `{expected_title}`. Close or rename old roadmap issues and rerun `rail import`.")
     roadmap = sorted(roadmap, key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
     return roadmap[0], len(roadmap) > 1
 

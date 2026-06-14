@@ -1,6 +1,6 @@
 # Workflows
 
-AI Rail supports one daily loop and three interaction models. The short commands are the normal path; the detailed commands remain available when you need manual control.
+AI Rail is a local CLI for keeping AI coding work scoped to one GitHub issue at a time. It supports one daily loop and three interaction models. The short commands are the normal path; the detailed commands remain available when you need manual control.
 
 ## Full Lifecycle
 

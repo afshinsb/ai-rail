@@ -122,7 +122,7 @@ from ai_rail.template_ops import (
     print_install_summary,
 )
 
-VERSION = "0.1.0a15"
+VERSION = "0.1.0a16"
 PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain for AI-assisted development."
 AUTHOR_NAME = "Afshin Saberi"
 PROJECT_REPOSITORY = "https://github.com/afshinsb/ai-rail"
@@ -717,12 +717,11 @@ def update_local_project_memory(managed: str) -> None:
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     existing = path.read_text(encoding="utf-8", errors="replace")
+    backup_project_memory_before_replacement(path)
     if is_placeholder_project_memory(existing) or ("CHANGE_ME:" in existing and "## Roadmap maintenance rules" in existing and RAIL_ROADMAP_START in existing):
-        backup_project_memory_before_replacement(path)
         path.write_text(project_memory_template(managed), encoding="utf-8")
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
-        backup_project_memory_before_replacement(path)
         before = existing.split(LOCAL_ROADMAP_START, 1)[0].rstrip()
         after = existing.split(LOCAL_ROADMAP_END, 1)[1].lstrip()
         path.write_text(f"{before}\n\n{new_block}\n\n{after}", encoding="utf-8")
@@ -892,7 +891,8 @@ def cmd_import(argv: list[str]) -> int:
 
     try:
         open_issues = fetch_github_issues(repo, "open")
-        roadmap, multiple = roadmap_issue_from_open_issues(open_issues)
+        project_name = str(cfg().get("project_name") or root().name)
+        roadmap, multiple = roadmap_issue_from_open_issues(open_issues, expected_project_name=project_name)
         if not roadmap:
             print("No open roadmap issue found. Run `rail plan --copy` first.", file=sys.stderr)
             return 1

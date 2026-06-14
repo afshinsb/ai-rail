@@ -282,12 +282,16 @@ def cmd_release_check(argv: list[str], ctx: SupportContext) -> int:
     template_runtime = ctx.safe_read_text(ctx.root() / "src" / "ai_rail" / "template" / ".rail" / "rail.py")
     add("template runtime version matches CLI", f'VERSION = "{ctx.version}"' in template_runtime)
 
-    cli_source = ctx.safe_read_text(ctx.root() / "src" / "ai_rail" / "cli.py")
+    python_modules = sorted((ctx.root() / "src" / "ai_rail").glob("*.py"))
+    python_modules.append(ctx.root() / "src" / "ai_rail" / "template" / ".rail" / "rail.py")
     try:
-        compile(cli_source, "src/ai_rail/cli.py", "exec")
-        add("cli.py compiles", True)
+        for path in python_modules:
+            rel = path.relative_to(ctx.root()).as_posix()
+            source = ctx.safe_read_text(path)
+            compile(source, rel, "exec")
+        add("Python modules compile", True)
     except SyntaxError as exc:
-        add("cli.py compiles", False, str(exc))
+        add("Python modules compile", False, str(exc))
 
     missing_docs = [name for name in ["QUICKSTART.md", "COMMANDS.md", "RELEASE.md"] if not (ctx.root() / "docs" / name).exists()]
     add("public docs present", not missing_docs, ", ".join(missing_docs))

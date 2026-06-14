@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.0a15"
+VERSION = "0.1.0a16"
 
 RAIL_DIR = Path(__file__).resolve().parent
 ROOT = RAIL_DIR.parent
@@ -450,10 +450,23 @@ def fetch_github_issues(repo: str, state_value: str, limit: int = 100) -> list[d
     return json.loads(result.stdout or "[]")
 
 
-def roadmap_issue_from_open_issues(open_issues: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
+def expected_roadmap_title(project_name: str) -> str:
+    return f"Roadmap: {project_name} functional MVP"
+
+
+def roadmap_issue_from_open_issues(open_issues: list[dict[str, Any]], expected_project_name: str | None = None) -> tuple[dict[str, Any] | None, bool]:
     roadmap = [item for item in open_issues if "roadmap:" in str(item.get("title", "")).lower()]
     if not roadmap:
         return None, False
+    if expected_project_name:
+        expected_title = expected_roadmap_title(expected_project_name)
+        exact = [item for item in roadmap if str(item.get("title", "")).strip() == expected_title]
+        if len(exact) == 1:
+            return exact[0], False
+        if len(exact) > 1:
+            raise RuntimeError(f"multiple open roadmap issues match `{expected_title}`. Close or rename old roadmap issues and rerun `rail import`.")
+        if len(roadmap) > 1:
+            raise RuntimeError(f"multiple open roadmap issues found and none matches `{expected_title}`. Close or rename old roadmap issues and rerun `rail import`.")
     roadmap = sorted(roadmap, key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
     return roadmap[0], len(roadmap) > 1
 
@@ -573,12 +586,11 @@ def update_local_project_memory(managed: str) -> None:
         write_text(PROJECT_PATH, project_memory_template(managed))
         return
     existing = read_text(PROJECT_PATH)
+    backup_project_memory_before_replacement()
     if is_placeholder_project_memory(existing):
-        backup_project_memory_before_replacement()
         write_text(PROJECT_PATH, project_memory_template(managed))
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
-        backup_project_memory_before_replacement()
         before = existing.split(LOCAL_ROADMAP_START, 1)[0].rstrip()
         after = existing.split(LOCAL_ROADMAP_END, 1)[1].lstrip()
         write_text(PROJECT_PATH, f"{before}\n\n{new_block}\n\n{after}")
@@ -1467,7 +1479,8 @@ def cmd_import(args: argparse.Namespace) -> int:
         return 1
     try:
         open_issues = fetch_github_issues(str(repo), "open")
-        roadmap, multiple = roadmap_issue_from_open_issues(open_issues)
+        project_name = str(load_config().get("project_name") or ROOT.name)
+        roadmap, multiple = roadmap_issue_from_open_issues(open_issues, expected_project_name=project_name)
         if not roadmap:
             print("No open roadmap issue found. Run `rail plan --copy` first.", file=sys.stderr)
             return 1

@@ -4,7 +4,7 @@ A tiny Node.js project for trying AI Rail in 5 minutes.
 
 ## Install AI Rail
 
-Intended public install after publishing:
+Public install:
 
 ```bash
 pipx install ai-rail
@@ -25,9 +25,10 @@ rail demo
 
 ## Setup demo project
 
-From this folder:
+From the AI Rail repository root:
 
 ```bash
+cd examples/demo-todo
 rail init --stack node --project-name "AI Rail Demo TODO"
 rail doctor
 rail resume

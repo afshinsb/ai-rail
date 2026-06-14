@@ -2,6 +2,12 @@
 
 Maintained by Afshin Saberi.
 
+## 0.1.0a16
+
+- Safer roadmap issue selection during import.
+- PROJECT.md backup before all import writes.
+- Release-check covers split Python modules.
+
 ## 0.1.0a15
 
 - Restored Python 3.10 compatibility with a conditional `tomli` fallback for TOML parsing.

@@ -2,6 +2,8 @@
 
 ## Daily Commands
 
+AI Rail is a local CLI. It gives the current repo a project brain and a one-issue-at-a-time workflow for AI coding tools.
+
 `.rail/PROJECT.md` is the full local project memory and roadmap brain. The GitHub roadmap issue is the remote roadmap mirror. GitHub implementation issues are only the active execution queue.
 
 On first import, `rail import` replaces the placeholder project-memory template with the imported managed roadmap memory. Later imports update only the managed block and preserve human notes outside the markers.
@@ -17,12 +19,12 @@ Imported project memory must contain one Rail-readable `AI RAIL ROADMAP START/EN
 | `rail plan` | Generate a GitHub-connected AI prompt to create a phased issue roadmap |
 | `rail import` | Import the GitHub roadmap issue memory into local `.rail/PROJECT.md` |
 | `rail phase` | Generate a GitHub-connected AI prompt to audit/update the current roadmap phase |
-| `rail next` | Start the next issue and generate the first prompt |
-| `rail handoff` | Generate model-specific portable context |
+| `rail next` | Start the next issue and generate the first coding prompt |
+| `rail handoff` | Generate portable context for another AI session/model |
 | `rail verify` | Write a review pack, run checks, and generate an audit prompt |
 | `rail ship` | Commit the issue branch, merge/push the default branch, then close and mark done |
-| `rail snapshot` | Refresh `.rail/brain/` |
-| `rail export` | Generate AI tool instruction files |
+| `rail snapshot` | Refresh `.rail/brain/` project-brain files |
+| `rail export` | Generate AI tool instruction files from the project brain |
 
 ## Short Aliases
 
