@@ -12,7 +12,7 @@ Use `rail plan --copy` before the first coding issue exists. Paste it into a Git
 
 Use `rail next --copy` after issues exist. It still starts one issue at a time and generates the coding-agent prompt for that single issue.
 
-After `rail s`, AI Rail marks the shipped issue completed locally when it appears in `.rail/PROJECT.md`. After several issues have shipped, use `rail phase --copy` to audit the current roadmap phase. Phase audit is not coding: the planning AI updates the GitHub roadmap issue and creates only the next right-sized execution slice. Then run `rail import` again.
+After `rail s`, AI Rail commits the issue branch, merges it into the configured default branch, pushes the default branch, closes the GitHub issue, and marks the shipped issue completed locally when it appears in `.rail/PROJECT.md`. After several issues have shipped, use `rail phase --copy` to audit the current roadmap phase. Phase audit is not coding: the planning AI updates the GitHub roadmap issue and creates only the next right-sized execution slice. Then run `rail import` again.
 
 ## Daily Loop
 
@@ -25,6 +25,8 @@ rail ship "type(scope): message"
 ```
 
 `rail verify` is the expensive gate: it captures review context, runs checks, and saves a verified snapshot. `rail ship` is the fast finalizer: it trusts that snapshot when the working tree still matches it, and only reruns checks when you pass `--recheck` or when legacy recovery is needed before a snapshot exists.
+
+`rail ship` closes the issue only after default-branch integration succeeds. If the merge conflicts, the issue remains open and active state remains so you can resolve conflicts, run checks, and rerun ship or finish manually. If `.rail/` is not tracked on the default branch, ship pauses before checkout/sync to avoid removing `.rail/rail.py` and breaking the local runtime. `rail ship --no-merge` is advanced/manual; it keeps branch-only behavior and does not integrate code into the default branch.
 
 Use `rail resume` before starting if you are returning to a repo after time away. Use `rail handoff --for chatgpt|codex|claude|cursor|aider --copy` when moving the task into another AI session.
 

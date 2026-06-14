@@ -20,7 +20,7 @@ Imported project memory must contain one Rail-readable `AI RAIL ROADMAP START/EN
 | `rail next` | Start the next issue and generate the first prompt |
 | `rail handoff` | Generate model-specific portable context |
 | `rail verify` | Write a review pack, run checks, and generate an audit prompt |
-| `rail ship` | Commit, push, close the issue, mark done, and sync |
+| `rail ship` | Commit the issue branch, merge/push the default branch, then close and mark done |
 | `rail snapshot` | Refresh `.rail/brain/` |
 | `rail export` | Generate AI tool instruction files |
 
@@ -76,7 +76,7 @@ These remain available when you want manual control:
 | `rail issue-close` | Close the active GitHub issue |
 | `rail pr-create` | Create a PR for the active issue |
 | `rail done` | Finish local AI Rail state |
-| `rail sync` | Checkout the default branch and pull |
+| `rail sync` | Checkout the default branch and pull, after checking that `.rail/rail.py` is tracked there |
 | `rail repo` | Print the detected GitHub repository |
 | `rail log` | Show recent AI Rail history |
 | `rail report` | Summarize local AI Rail history |
@@ -103,6 +103,10 @@ rail ship "fix(scope): message"
 ```
 
 `rail verify` runs checks and saves a verified snapshot of the reviewed diff. `rail ship` trusts that snapshot when the working tree still matches it, so the normal ship path does not rerun checks. Use `rail ship --recheck "fix(scope): message"` when you intentionally want checks rerun during ship. The review guard, dangerous-path guard, and explicit escape hatches such as `--allow-missing-checks`, `--allow-stale`, and `--force` still apply.
+
+By default, `rail ship` means the issue branch is integrated into the configured default branch. It commits and pushes the issue branch, verifies the default branch and `.rail/rail.py`, checks out and pulls the default branch, merges the issue branch, pushes the default branch, then closes the issue and clears active state. If the merge conflicts, the issue remains open and active state remains. If `.rail/` is not tracked on the default branch, ship pauses before checkout so `.rail/rail.py`, `.rail/PROJECT.md`, `.rail/config.json`, and local state folders are not removed.
+
+`rail ship --no-merge` is an advanced/manual compatibility path. It does not integrate code into the default branch, so branch-only work should not be treated as fully shipped until you merge it manually.
 
 ### Run A Focused Check
 

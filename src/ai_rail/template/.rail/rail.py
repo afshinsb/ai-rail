@@ -119,6 +119,20 @@ def git_available() -> bool:
     return shutil.which("git") is not None
 
 
+def git_ref_exists(ref: str) -> bool:
+    if not ref or not git_available():
+        return False
+    result = run(["git", "rev-parse", "--verify", "--quiet", ref], timeout=15)
+    return result.returncode == 0
+
+
+def rail_runtime_tracked_on_branch(branch: str) -> bool:
+    if not branch or not git_available():
+        return False
+    result = run(["git", "cat-file", "-e", f"{branch}:.rail/rail.py"], timeout=15)
+    return result.returncode == 0
+
+
 def current_branch() -> str:
     if not git_available():
         return "unknown"
@@ -1598,6 +1612,13 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return 1
 
     branch = args.branch or default_branch()
+    ref = branch if git_ref_exists(branch) else f"origin/{branch}"
+    if git_ref_exists(ref) and not rail_runtime_tracked_on_branch(ref):
+        print("Warning: sync paused because .rail/ is not tracked on the target branch.")
+        print("Checkout/sync could remove AI Rail runtime files.")
+        print("Recommended: commit .rail/ on the target branch, then rerun rail sync.")
+        return 1
+
     checkout = run(["git", "checkout", branch], timeout=60)
     if checkout.returncode != 0:
         print(checkout.stderr.strip() or checkout.stdout.strip())

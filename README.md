@@ -14,7 +14,7 @@ It gives every Git repo a portable project brain, a simple daily workflow, and s
 ```text
 rail n  -> start the next scoped task
 rail v  -> review, run local checks, and create an audit prompt
-rail s  -> safely commit, push, close, and sync
+rail s  -> safely commit, merge to default, push, and close
 rail h  -> continue in a new AI chat with full project context
 ```
 
@@ -193,7 +193,7 @@ rail v
 rail s "type(scope): message"
 ```
 
-`rail verify` runs checks and saves a verified snapshot of the reviewed diff. `rail ship` trusts that snapshot when the working tree still matches it, so the normal ship path does not rerun checks. Use `rail ship --recheck "type(scope): message"` when you intentionally want checks rerun during ship.
+`rail verify` runs checks and saves a verified snapshot of the reviewed diff. `rail ship` trusts that snapshot when the working tree still matches it, so the normal ship path does not rerun checks. Use `rail ship --recheck "type(scope): message"` when you intentionally want checks rerun during ship. `rail ship` closes the issue only after the issue branch is merged into the configured default branch and that default branch is pushed.
 
 When switching AI tools or opening a new chat:
 
@@ -220,7 +220,7 @@ rail export
 | `rail next` | Start the next issue and generate the first prompt |
 | `rail handoff` | Generate portable context for another AI session/model |
 | `rail verify` | Capture review info, run checks, and generate an audit prompt |
-| `rail ship` | Commit, push, close the issue, mark done, and sync |
+| `rail ship` | Commit the issue branch, merge/push the default branch, then close and mark done |
 | `rail snapshot` | Refresh `.rail/brain/` project-brain files |
 | `rail export` | Generate `AGENTS.md`, `CLAUDE.md`, Cursor rules, `AIDER.md`, and Copilot instructions |
 | `rail demo` | Print the public demo script |
