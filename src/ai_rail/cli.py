@@ -9,10 +9,14 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
 from importlib import resources
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 VERSION = "0.1.0a14"
 PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain for AI-assisted development."
