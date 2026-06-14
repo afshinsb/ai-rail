@@ -32,6 +32,8 @@ REMOTE_MEMORY_START = "<!-- AI RAIL PROJECT MEMORY START -->"
 REMOTE_MEMORY_END = "<!-- AI RAIL PROJECT MEMORY END -->"
 LOCAL_ROADMAP_START = "<!-- AI RAIL MANAGED ROADMAP START -->"
 LOCAL_ROADMAP_END = "<!-- AI RAIL MANAGED ROADMAP END -->"
+RAIL_ROADMAP_START = "<!-- AI RAIL ROADMAP START -->"
+RAIL_ROADMAP_END = "<!-- AI RAIL ROADMAP END -->"
 
 
 ISSUE_TEMPLATE = """## Goal
@@ -436,6 +438,11 @@ def extract_remote_memory(body: str) -> str | None:
     return body.split(REMOTE_MEMORY_START, 1)[1].split(REMOTE_MEMORY_END, 1)[0].strip()
 
 
+def extract_strict_roadmap_blocks(text: str) -> list[str]:
+    pattern = re.escape(RAIL_ROADMAP_START) + r".*?" + re.escape(RAIL_ROADMAP_END)
+    return re.findall(pattern, text, flags=re.DOTALL)
+
+
 def render_managed_roadmap_from_issue(roadmap: dict[str, Any], open_issues: list[dict[str, Any]], closed_issues: list[dict[str, Any]]) -> str:
     body = str(roadmap.get("body") or "").strip() or "_No roadmap body captured._"
     open_impl = [item for item in open_issues if item.get("number") != roadmap.get("number")]
@@ -526,6 +533,14 @@ def is_placeholder_project_memory(text: str) -> bool:
     return not remainder.strip()
 
 
+def backup_project_memory_before_replacement() -> None:
+    if not PROJECT_PATH.exists() or not PROJECT_PATH.is_file():
+        return
+    backup = PROJECT_PATH.with_name(PROJECT_PATH.name + ".rail.bak")
+    shutil.copy2(PROJECT_PATH, backup)
+    print(f"[rail] Backed up .rail/PROJECT.md to .rail/{backup.name}")
+
+
 def update_local_project_memory(managed: str) -> None:
     new_block = f"{LOCAL_ROADMAP_START}\n\n{managed.strip()}\n\n{LOCAL_ROADMAP_END}"
     if not PROJECT_PATH.exists():
@@ -533,6 +548,7 @@ def update_local_project_memory(managed: str) -> None:
         return
     existing = read_text(PROJECT_PATH)
     if is_placeholder_project_memory(existing):
+        backup_project_memory_before_replacement()
         write_text(PROJECT_PATH, project_memory_template(managed))
         return
     if LOCAL_ROADMAP_START in existing and LOCAL_ROADMAP_END in existing:
@@ -1425,7 +1441,18 @@ def cmd_import(args: argparse.Namespace) -> int:
             print("No open roadmap issue found. Run `rail plan --copy` first.", file=sys.stderr)
             return 1
         closed_issues = fetch_github_issues(str(repo), "closed")
-        managed = extract_remote_memory(str(roadmap.get("body") or "")) or render_managed_roadmap_from_issue(roadmap, open_issues, closed_issues)
+        remote_block = extract_remote_memory(str(roadmap.get("body") or ""))
+        if remote_block is None:
+            print("Import failed: roadmap issue has no managed AI Rail project memory block.", file=sys.stderr)
+            print(f"Update the GitHub roadmap issue with exactly one strict {RAIL_ROADMAP_START} / {RAIL_ROADMAP_END} block, then run rail import again.", file=sys.stderr)
+            return 1
+        strict_blocks = extract_strict_roadmap_blocks(remote_block)
+        if len(strict_blocks) != 1:
+            count = "no" if not strict_blocks else f"{len(strict_blocks)}"
+            print(f"Import failed: managed roadmap memory contains {count} strict AI RAIL ROADMAP blocks; expected exactly one.", file=sys.stderr)
+            print(f"Update the GitHub roadmap issue with exactly one strict {RAIL_ROADMAP_START} / {RAIL_ROADMAP_END} block, then run rail import again.", file=sys.stderr)
+            return 1
+        managed = remote_block
         update_local_project_memory(managed)
     except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
         print(f"Import failed: {exc}", file=sys.stderr)
@@ -1606,9 +1633,10 @@ def cmd_commit(args: argparse.Namespace) -> int:
             return push.returncode or 1
         print(push.stdout.strip() or push.stderr.strip() or "Pushed.")
 
-    print("\nNext:")
-    print("rail issue-close --commit")
-    print("rail done")
+    if os.environ.get("AI_RAIL_SUPPRESS_COMMIT_NEXT") != "1":
+        print("\nNext:")
+        print("rail issue-close --commit")
+        print("rail done")
     return 0
 
 

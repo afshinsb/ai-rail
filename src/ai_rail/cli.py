@@ -592,14 +592,16 @@ def rewrite_core_output(text: str) -> str:
     return re.sub(r"(?<![a-zA-Z])o\s+(?=[a-z])", "rail ", text)
 
 
-def delegate(args: list[str], *, stream: bool = False) -> int:
+def delegate(args: list[str], *, stream: bool = False, extra_env: dict[str, str] | None = None) -> int:
     if not local_py().exists():
         print("No .rail/rail.py found. Run: rail init", file=sys.stderr)
         return 1
+    env = {**os.environ, **(extra_env or {})}
     if stream:
         proc = subprocess.Popen(
             [sys.executable, str(local_py()), *args],
             cwd=root(),
+            env=env,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -616,6 +618,7 @@ def delegate(args: list[str], *, stream: bool = False) -> int:
     result = subprocess.run(
         [sys.executable, str(local_py()), *args],
         cwd=root(),
+        env=env,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -1407,16 +1410,16 @@ def roadmap_task_id_mentions(title: str | None, body: str | None) -> set[str]:
     return set(re.findall(RAIL_TASK_ID_PATTERN, text))
 
 
-def mark_project_issue_completed(issue_number: Any, title: str | None = None, body: str | None = None) -> tuple[bool, str | None]:
+def mark_project_issue_completed(issue_number: Any, title: str | None = None, body: str | None = None) -> bool:
     path = rail_dir() / "PROJECT.md"
     if not path.exists() or issue_number in {None, ""}:
-        return False, None
+        return False
     text = path.read_text(encoding="utf-8", errors="replace")
     num = str(issue_number)
     blocks = extract_strict_roadmap_blocks(text)
     if len(blocks) != 1:
         print_no_matching_roadmap_task(num)
-        return False, None
+        return False
     block = blocks[0]
     block_start = text.find(block)
     task_pattern = re.compile(
@@ -1442,15 +1445,15 @@ def mark_project_issue_completed(issue_number: Any, title: str | None = None, bo
         candidates = [task for task in tasks if task["task_id"] in mentioned_ids]
     if len(candidates) != 1:
         print_no_matching_roadmap_task(num)
-        return False, None
+        return False
     task = candidates[0]
     if task["status"] == "x":
-        return False, None
+        return False
 
     status_start = block_start + task["match"].start("status")
     updated = text[:status_start] + "x" + text[status_start + 1:]
     path.write_text(updated, encoding="utf-8")
-    return True, None
+    return True
 
 
 def cmd_start(argv: list[str]) -> int:
@@ -1749,7 +1752,6 @@ def cmd_ship(argv: list[str]) -> int:
     project_path = rail_dir() / "PROJECT.md"
     project_memory_before_ship: str | None = None
     project_memory_existed_before_ship = project_path.exists()
-    pending_phase_hint: str | None = None
     if project_memory_existed_before_ship and project_path.is_file():
         project_memory_before_ship = project_path.read_text(encoding="utf-8", errors="replace")
 
@@ -1831,11 +1833,10 @@ def cmd_ship(argv: list[str]) -> int:
         issue = active_before_ship.get("issue", {})
         try:
             rail_print(f"{rail_icon('info')} Updating .rail/PROJECT.md for completed issue #{issue.get('number')}.")
-            updated, phase_hint = mark_project_issue_completed(issue.get("number"), issue.get("title"), issue.get("body"))
+            updated = mark_project_issue_completed(issue.get("number"), issue.get("title"), issue.get("body"))
             if updated:
                 rail_print(f"{rail_icon('success')} Updated .rail/PROJECT.md for completed issue; it will be included in the ship commit.")
                 refresh_review_and_check_artifacts()
-            pending_phase_hint = phase_hint
         except Exception as exc:
             rail_print(f"{rail_icon('warning')} Could not update .rail/PROJECT.md before ship: {exc}")
             rail_print(f"{rail_icon('tip')} Recovery: mark the completed issue in .rail/PROJECT.md manually.")
@@ -1850,7 +1851,7 @@ def cmd_ship(argv: list[str]) -> int:
     rail_print(f"{rail_icon('info')} Committing...")
     head_before_commit = run(["git", "rev-parse", "HEAD"], timeout=15)
     head_before = head_before_commit.stdout.strip() if head_before_commit.returncode == 0 else None
-    rc = delegate(commit_args)
+    rc = delegate(commit_args, extra_env={"AI_RAIL_SUPPRESS_COMMIT_NEXT": "1"})
     if rc != 0:
         if active_before_ship:
             try:
@@ -1906,9 +1907,6 @@ def cmd_ship(argv: list[str]) -> int:
             rail_print(f"{rail_icon('info')} Active state was kept.")
             rail_print(f"{rail_icon('tip')} Recovery: manually close the GitHub issue or fix `gh auth login`, then run: rail done && rail sync")
             return rc
-
-    if pending_phase_hint:
-        print(f"[rail] {pending_phase_hint}")
 
     if not ns.no_done:
         done_args: list[str] = []
