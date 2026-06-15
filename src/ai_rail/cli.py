@@ -131,7 +131,7 @@ from ai_rail.template_ops import (
     print_install_summary,
 )
 
-VERSION = "0.1.0a17"
+VERSION = "0.1.0a18"
 PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain for AI-assisted development."
 AUTHOR_NAME = "Afshin Saberi"
 PROJECT_REPOSITORY = "https://github.com/afshinsb/ai-rail"

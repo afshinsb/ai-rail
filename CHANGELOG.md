@@ -2,7 +2,17 @@
 
 Maintained by Afshin Saberi.
 
-## Unreleased / 0.1.0a17
+## 0.1.0a18
+
+- Added/polished first-run bootstrap flow:
+  - `rail bootstrap --private`
+  - `rail bootstrap --public`
+  - creates local Git baseline, GitHub repo, initializes Rail, commits `.rail/`, and pushes safely
+  - fixes repository detection so config does not stay `CHANGE_ME`
+  - suppresses no-remote guidance during bootstrap
+  - improves `Checks: none detected` wording
+
+## 0.1.0a17
 
 - Added safer dirty-repo `rail init` guidance for branch/default-branch setup and legacy workflow migration.
 - Improved `rail doctor` guidance when `.rail/` exists only off the default branch, while keeping compatibility wording.
