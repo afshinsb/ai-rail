@@ -204,6 +204,10 @@ def review_path() -> Path:
     return state() / "last-review.md"
 
 
+def agent_result_path() -> Path:
+    return state() / "agent-result.md"
+
+
 def brain_dir() -> Path:
     return rail_dir() / "brain"
 
@@ -568,6 +572,10 @@ def reviewed_untracked_text_contents(max_file_chars: int = 12000, max_total_char
     return git_reviewed_untracked_text_contents(root(), untracked_files(), max_file_chars, max_total_chars)
 
 
+def clear_agent_result() -> None:
+    agent_result_path().unlink(missing_ok=True)
+
+
 def git_diff_for_fingerprint() -> str:
     return git_diff_for_fingerprint_impl(run)
 
@@ -842,6 +850,7 @@ def cmd_next(argv: list[str]) -> int:
         issue = active_issue.get("issue", {})
         number = issue.get("number")
         print(f"[rail] Issue #{number} is already active. Reusing active issue prompt.")
+        clear_agent_result()
         if ns.no_prompt:
             return 0
         model = active_model() or ns.model
@@ -867,6 +876,7 @@ def cmd_next(argv: list[str]) -> int:
         if ns.issue_ref == "next":
             print_no_open_issue_phase_guidance()
         return rc
+    clear_agent_result()
     if ns.no_prompt:
         return rc
 

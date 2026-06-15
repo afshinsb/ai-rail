@@ -1280,6 +1280,19 @@ def test_clear_active_clears_only_local_active_state(tmp_path: Path) -> None:
     assert not (tmp_path / ".rail" / "state" / "history.jsonl").exists()
 
 
+def test_next_clears_stale_agent_result_and_prompts_for_final_summary(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    write_active_issue(tmp_path, number=5, title="Reset local prompt")
+    agent_result = tmp_path / ".rail" / "state" / "agent-result.md"
+    agent_result.write_text("old summary\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "next")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert not agent_result.exists()
+    assert "At the end, overwrite `.rail/state/agent-result.md` with your final summary. Do not append." in result.stdout
+
+
 def test_clear_active_no_active_issue_is_noop(tmp_path: Path) -> None:
     result = run_cli(tmp_path, "clear-active")
 
@@ -1934,6 +1947,36 @@ def test_phase3_review_includes_untracked_text_file_contents(tmp_path: Path) -> 
     review = (tmp_path / ".rail" / "state" / "last-review.md").read_text(encoding="utf-8")
     assert "### src/new.py" in review
     assert "print(123)" in review
+
+
+def test_review_includes_coding_agent_result(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    state = tmp_path / ".rail" / "state"
+    (state / "agent-result.md").write_text("Changed app flow.\nChecks not run.\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "review")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    review = (state / "last-review.md").read_text(encoding="utf-8")
+    assert "## Coding agent result" in review
+    assert "Changed app flow." in review
+    assert "Checks not run." in review
+
+
+def test_review_truncates_long_coding_agent_result(tmp_path: Path) -> None:
+    init_static_repo_with_commit(tmp_path)
+    state = tmp_path / ".rail" / "state"
+    lines = [f"line {i}" for i in range(140)]
+    (state / "agent-result.md").write_text("\n".join(lines), encoding="utf-8")
+
+    result = run_cli(tmp_path, "review")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    review = (state / "last-review.md").read_text(encoding="utf-8")
+    assert "## Coding agent result" in review
+    assert "line 119" in review
+    assert "line 120" not in review
+    assert "[rail] Coding agent result truncated." in review
 
 
 def test_review_includes_untracked_text_file_with_spaces(tmp_path: Path) -> None:

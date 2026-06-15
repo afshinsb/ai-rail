@@ -28,6 +28,7 @@ LAST_REVIEW_PATH = STATE_DIR / "last-review.md"
 LAST_CHECKS_PATH = STATE_DIR / "last-checks.md"
 LAST_CODEX_PROMPT_PATH = STATE_DIR / "last-codex-prompt.md"
 LAST_REVIEW_PROMPT_PATH = STATE_DIR / "last-chatgpt-review-prompt.md"
+AGENT_RESULT_PATH = STATE_DIR / "agent-result.md"
 REMOTE_MEMORY_START = "<!-- AI RAIL PROJECT MEMORY START -->"
 REMOTE_MEMORY_END = "<!-- AI RAIL PROJECT MEMORY END -->"
 LOCAL_ROADMAP_START = "<!-- AI RAIL MANAGED ROADMAP START -->"
@@ -1093,6 +1094,8 @@ Return:
 - checks run, or "Checks not run; human will run rail v."
 - remaining risks
 
+At the end, overwrite `.rail/state/agent-result.md` with your final summary. Do not append.
+
 Issue body:
 ```markdown
 {body}
@@ -1362,7 +1365,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     save_json(ACTIVE_PATH, active)
 
     # Clear stale loop state for new issue.
-    for path in (LAST_REVIEW_PATH, LAST_CHECKS_PATH, LAST_CODEX_PROMPT_PATH, LAST_REVIEW_PROMPT_PATH):
+    for path in (LAST_REVIEW_PATH, LAST_CHECKS_PATH, LAST_CODEX_PROMPT_PATH, LAST_REVIEW_PROMPT_PATH, AGENT_RESULT_PATH):
         path.unlink(missing_ok=True)
 
     for warning in warn_placeholders():
@@ -1781,6 +1784,24 @@ def git_output(title: str, cmd: list[str], timeout: int = 30) -> str:
     return f"## {title}\n\nRun: `{' '.join(cmd)}`\n\n```text\n{content or 'No output.'}\n```\n"
 
 
+def coding_agent_result(max_chars: int = 8192, max_lines: int = 120) -> str | None:
+    if not AGENT_RESULT_PATH.exists():
+        return None
+    text = AGENT_RESULT_PATH.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    truncated = False
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        truncated = True
+    output = "\n".join(lines)
+    if len(output) > max_chars:
+        output = output[:max_chars].rstrip()
+        truncated = True
+    if truncated:
+        output = output.rstrip() + "\n\n[rail] Coding agent result truncated."
+    return output.strip() or "(empty)"
+
+
 def cmd_review(args: argparse.Namespace) -> int:
     active = active_issue()
     issue_line = "No active issue."
@@ -1801,6 +1822,9 @@ def cmd_review(args: argparse.Namespace) -> int:
         git_output("Untracked Files", ["git", "ls-files", "--others", "--exclude-standard"]),
         "## Untracked Text File Contents\n\n" + untracked_text_contents(),
     ]
+    agent_result = coding_agent_result()
+    if agent_result is not None:
+        sections.append("## Coding agent result\n\n" + agent_result)
     if args.full_diff:
         sections.append(git_output("Git Diff", ["git", "diff", "--", "."], timeout=30))
 
