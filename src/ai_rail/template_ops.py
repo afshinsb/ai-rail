@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from importlib import resources
@@ -39,6 +40,12 @@ class TemplateContext:
     branch_exists: Callable[[Any], bool]
     detect_default_branch: Callable[[], str]
     init_dirty_inspection: Callable[[str], dict[str, Any]]
+    is_inside_work_tree: Callable[[], bool]
+    has_git_dir: Callable[[], bool]
+    git_safety_preflight: Callable[[], dict[str, Any]]
+    git_state_blocks_new_work: Callable[[dict[str, Any]], bool]
+    run_git_init: Callable[[], subprocess.CompletedProcess[str]]
+    has_github_remote: Callable[[], bool]
     version: str
 
 
@@ -212,6 +219,50 @@ def print_init_git_next_commands(inspection: dict[str, Any], *, adopt: bool = Fa
         print("rail init --clean-default")
 
 
+def print_missing_git_repo_guidance() -> None:
+    print(f"{init_icon('error')} AI Rail needs a Git repository.")
+    print(f"{init_icon('branch')} Current folder is not inside a Git repo.")
+    print(f"{init_icon('tip')} Recommended:")
+    print("git init -b main")
+    print("git add -A")
+    print('git commit -m "chore: initial project baseline"')
+    print("rail init --clean-default")
+    print(f"{init_icon('tip')} Or let Rail create the local repo:")
+    print("rail init --git-init")
+
+
+def print_missing_github_remote_guidance() -> None:
+    print(f"{init_icon('warning')} No GitHub remote found.")
+    print(f"{init_icon('branch')} AI Rail can work locally, but GitHub issues/roadmap sync need a remote.")
+    print(f"{init_icon('tip')} Recommended:")
+    print("gh repo create OWNER/PROJECT --private --source . --remote origin --push")
+    print("rail init --clean-default")
+    print(f"{init_icon('tip')} Or let Rail create the GitHub repo:")
+    print("rail github-create --private")
+    print("rail github-create --public")
+
+
+def print_git_state_blocked(action: str, state: dict[str, Any]) -> None:
+    print(f"{init_icon('error')} rail {action} is blocked because Git has unresolved state.")
+    active = []
+    if state.get("merge_active"):
+        active.append("merge")
+    if state.get("rebase_active"):
+        active.append("rebase")
+    if state.get("cherry_pick_active"):
+        active.append("cherry-pick")
+    if state.get("revert_active"):
+        active.append("revert")
+    if active:
+        print(f"{init_icon('branch')} Active Git operation: {', '.join(active)}")
+    if state.get("unmerged_files"):
+        print(f"{init_icon('warning')} Unresolved files:")
+        for item in state["unmerged_files"]:
+            print(f"- {item}")
+    print(f"{init_icon('tip')} Run: git status --short")
+    print("Resolve conflicts and commit the merge, or abort it before continuing.")
+
+
 BENIGN_INIT_UNTRACKED_FILES = {
     "README.md",
     "package.json",
@@ -272,11 +323,37 @@ def cmd_init(argv: list[str], ctx: TemplateContext) -> int:
     parser.add_argument("--allow-dirty", action="store_true", help="Initialize even when the working tree is dirty.")
     parser.add_argument("--adopt-dirty", action="store_true", help="Initialize and treat current dirty work as the intended baseline.")
     parser.add_argument("--clean-default", action="store_true", help="Refuse unless on the clean default branch.")
+    parser.add_argument("--git-init", action="store_true", help="Create a local Git repo first when this folder is not already in one.")
     ns = parser.parse_args(argv)
 
     if sum(bool(value) for value in [ns.allow_dirty, ns.adopt_dirty, ns.clean_default]) > 1:
         print(f"{init_icon('error', sys.stderr)} Choose only one of --allow-dirty, --adopt-dirty, or --clean-default.", file=sys.stderr)
         return 1
+
+    if not shutil.which("git"):
+        print(f"{init_icon('error')} Git is required for rail init.")
+        return 1
+
+    if not ctx.is_inside_work_tree():
+        if ctx.has_git_dir():
+            print(f"{init_icon('error')} AI Rail found Git metadata, but this is not a healthy Git work tree.")
+            print(f"{init_icon('tip')} Run: git status --short")
+            return 1
+        if not ns.git_init:
+            print_missing_git_repo_guidance()
+            return 1
+        result = ctx.run_git_init()
+        if result.returncode != 0:
+            print(f"{init_icon('error')} Could not create a local Git repo.")
+            print(f"{init_icon('tip')} Try manually: git init -b main")
+            return result.returncode or 1
+        print(f"{init_icon('success')} Created local Git repo on branch main.")
+    elif ns.git_init:
+        state = ctx.git_safety_preflight()
+        if ctx.git_state_blocks_new_work(state):
+            print_git_state_blocked("init --git-init", state)
+            return 1
+        print(f"{init_icon('branch')} Git repo already exists; continuing with Rail initialization.")
 
     default_branch = ctx.detect_default_branch()
     inspection = ctx.init_dirty_inspection(default_branch)
@@ -285,7 +362,7 @@ def cmd_init(argv: list[str], ctx: TemplateContext) -> int:
         print(f"{init_icon('error')} rail init --clean-default requires the current branch to be the clean default branch.")
         print_init_dirty_warning(inspection)
         return 1
-    if requires_dirty_flag and not (ns.allow_dirty or ns.adopt_dirty or ns.force):
+    if requires_dirty_flag and not (ns.allow_dirty or ns.adopt_dirty or ns.force or ns.git_init):
         print_init_dirty_warning(inspection)
         print("")
         print(f"{init_icon('tip')} Run one of:")
@@ -335,8 +412,11 @@ def cmd_init(argv: list[str], ctx: TemplateContext) -> int:
     print("\nNext:")
     print("rail doctor")
     print("rail status")
-    if ns.allow_dirty or ns.adopt_dirty:
-        print_init_git_next_commands(inspection, adopt=ns.adopt_dirty)
+    if ns.allow_dirty or ns.adopt_dirty or ns.git_init:
+        print_init_git_next_commands(inspection, adopt=ns.adopt_dirty or ns.git_init)
+    if not ctx.has_github_remote():
+        print("")
+        print_missing_github_remote_guidance()
     return 0
 
 

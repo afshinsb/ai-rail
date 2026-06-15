@@ -59,14 +59,18 @@ from ai_rail.git_ops import (
     changed_files as git_changed_files,
     current_branch as git_current_branch,
     git_diff_for_fingerprint as git_diff_for_fingerprint_impl,
+    has_baseline_commit as git_has_baseline_commit,
+    has_git_dir as git_has_git_dir,
     init_dirty_inspection as git_init_dirty_inspection,
     git_ref_exists as git_ref_exists_impl,
     git_safety_preflight as git_safety_preflight_impl,
     git_status_porcelain as git_status_porcelain_impl,
     git_state_blocks_new_work as git_state_blocks_new_work_impl,
+    is_inside_work_tree as git_is_inside_work_tree,
     is_probably_text_file as git_is_probably_text_file,
     latest_change_mtime as git_latest_change_mtime,
     rail_runtime_tracked_on_branch as git_rail_runtime_tracked_on_branch,
+    remote_url as git_remote_url,
     reviewed_untracked_text_contents as git_reviewed_untracked_text_contents,
     untracked_files as git_untracked_files,
 )
@@ -158,6 +162,7 @@ RAIL_ICONS = {
     "success": "\u2705",
     "info": "\u2139\ufe0f",
     "tip": "\U0001f4a1",
+    "context": "\U0001f9ed",
 }
 RAIL_ICON_FALLBACKS = {
     "error": "Error:",
@@ -165,6 +170,7 @@ RAIL_ICON_FALLBACKS = {
     "success": "OK:",
     "info": "Info:",
     "tip": "Tip:",
+    "context": "Context:",
 }
 
 
@@ -386,14 +392,34 @@ def rail_runtime_tracked_on_branch(branch: str) -> bool:
 def detect_repo_from_git_remote() -> str | None:
     if not shutil.which("git"):
         return None
-    result = run(["git", "remote", "get-url", "origin"], timeout=5)
-    url = result.stdout.strip()
+    url = git_remote_url("origin", run) or ""
     if not url:
         return None
     repo = parse_github_remote_url(url)
     if repo:
         return repo
     return url
+
+
+def has_github_remote() -> bool:
+    url = git_remote_url("origin", run)
+    return bool(url and parse_github_remote_url(url))
+
+
+def is_inside_work_tree() -> bool:
+    return git_is_inside_work_tree(run)
+
+
+def has_git_dir() -> bool:
+    return git_has_git_dir(root())
+
+
+def run_git_init_main() -> subprocess.CompletedProcess[str]:
+    return run(["git", "init", "-b", "main"], timeout=30)
+
+
+def has_baseline_commit() -> bool:
+    return git_has_baseline_commit(run)
 
 
 def planning_identity() -> tuple[str, str]:
@@ -478,6 +504,12 @@ def template_context() -> TemplateContext:
         branch_exists=branch_exists,
         detect_default_branch=detect_default_branch,
         init_dirty_inspection=lambda default_branch: git_init_dirty_inspection(root(), default_branch, run),
+        is_inside_work_tree=is_inside_work_tree,
+        has_git_dir=has_git_dir,
+        git_safety_preflight=git_safety_preflight,
+        git_state_blocks_new_work=git_state_blocks_new_work,
+        run_git_init=run_git_init_main,
+        has_github_remote=has_github_remote,
         version=VERSION,
     )
 
@@ -507,6 +539,93 @@ def cmd_init(argv: list[str]) -> int:
 
 def cmd_upgrade(argv: list[str]) -> int:
     return template_cmd_upgrade(argv, template_context())
+
+
+def detected_github_owner() -> str | None:
+    if not gh_available():
+        return None
+    result = run(["gh", "api", "user", "--jq", ".login"], timeout=15)
+    owner = result.stdout.strip()
+    return owner if result.returncode == 0 and owner else None
+
+
+def print_no_github_remote_guidance() -> None:
+    rail_print(f"{rail_icon('warning')} No GitHub remote found.")
+    rail_print(f"{rail_icon('context')} AI Rail can work locally, but GitHub issues/roadmap sync need a remote.")
+    rail_print(f"{rail_icon('tip')} Recommended:")
+    rail_print("gh repo create OWNER/PROJECT --private --source . --remote origin --push")
+    rail_print("rail init --clean-default")
+    rail_print(f"{rail_icon('tip')} Or let Rail create the GitHub repo:")
+    rail_print("rail github-create --private")
+    rail_print("rail github-create --public")
+
+
+def cmd_github_create(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="rail github-create")
+    visibility = parser.add_mutually_exclusive_group(required=True)
+    visibility.add_argument("--private", action="store_true", help="Create a private GitHub repo.")
+    visibility.add_argument("--public", action="store_true", help="Create a public GitHub repo.")
+    parser.add_argument("--repo", help="Explicit OWNER/PROJECT repo name. Defaults to the gh user and folder name.")
+    ns = parser.parse_args(argv)
+
+    if not gh_available():
+        rail_print(f"{rail_icon('error')} GitHub CLI `gh` is required for rail github-create.")
+        rail_print(f"{rail_icon('tip')} Install and authenticate `gh`, then rerun this command.")
+        return 1
+    if not shutil.which("git"):
+        rail_print(f"{rail_icon('error')} Git is required for rail github-create.")
+        return 1
+    if not is_inside_work_tree():
+        rail_print(f"{rail_icon('error')} AI Rail needs a Git repository before creating a GitHub remote.")
+        rail_print(f"{rail_icon('tip')} Run: git init -b main")
+        return 1
+
+    state = git_safety_preflight()
+    if git_state_blocks_new_work(state):
+        print_git_state_blocked("github-create", state)
+        return 1
+
+    existing_origin = git_remote_url("origin", run)
+    if existing_origin:
+        rail_print(f"{rail_icon('error')} origin already exists.")
+        rail_print(f"{rail_icon('context')} Current origin: {existing_origin}")
+        rail_print(f"{rail_icon('tip')} Remove or rename it yourself if you intentionally want a different GitHub remote.")
+        return 1
+
+    if not has_baseline_commit():
+        rail_print(f"{rail_icon('error')} A baseline commit is required before creating a GitHub repo.")
+        rail_print(f"{rail_icon('tip')} Recommended:")
+        rail_print("git add -A")
+        rail_print('git commit -m "chore: initialize ai rail workflow"')
+        return 1
+
+    repo = ns.repo
+    if not repo:
+        owner = detected_github_owner()
+        if not owner:
+            rail_print(f"{rail_icon('error')} Could not detect your GitHub owner from `gh`.")
+            rail_print(f"{rail_icon('tip')} Rerun with: rail github-create --private --repo OWNER/PROJECT")
+            return 1
+        repo = f"{owner}/{root().name}"
+
+    visibility_flag = "--public" if ns.public else "--private"
+    branch = current_branch()
+    create = run(["gh", "repo", "create", repo, visibility_flag, "--source", ".", "--remote", "origin", "--push"], timeout=120)
+    if create.returncode != 0:
+        rail_print(f"{rail_icon('error')} GitHub repo creation failed.")
+        message = (create.stderr or create.stdout).strip()
+        if message:
+            rail_print(message)
+        return create.returncode or 1
+
+    repo_url = create.stdout.strip() or create.stderr.strip()
+    if not repo_url:
+        repo_url = git_remote_url("origin", run) or f"https://github.com/{repo}"
+    rail_print(f"{rail_icon('success')} GitHub repo created and pushed from `{branch}`.")
+    rail_print(f"{rail_icon('context')} Repo: {repo_url}")
+    rail_print(f"{rail_icon('tip')} Next:")
+    rail_print("rail init --clean-default")
+    return 0
 
 
 def active() -> dict[str, Any] | None:
@@ -1285,11 +1404,11 @@ def git_state_blocks_new_work(state: dict[str, Any]) -> bool:
 
 
 def print_git_state_blocked(action: str, state: dict[str, Any]) -> None:
-    print(f"Error: rail {action} is blocked because Git has unresolved state.")
+    rail_print(f"{rail_icon('error')} rail {action} is blocked because Git has unresolved state.")
     if state.get("unmerged_files"):
-        print("Unresolved files:")
+        rail_print(f"{rail_icon('warning')} Unresolved files:")
         for item in state["unmerged_files"]:
-            print(f"- {item}")
+            rail_print(f"- {item}")
     active_ops = []
     if state.get("merge_active"):
         active_ops.append("merge")
@@ -1300,10 +1419,10 @@ def print_git_state_blocked(action: str, state: dict[str, Any]) -> None:
     if state.get("revert_active"):
         active_ops.append("revert")
     if active_ops:
-        print("Active Git operation: " + ", ".join(active_ops))
-    print("Run: git status --short")
-    print("Resolve conflicts and commit the merge, or abort it before continuing.")
-    print("If this is a merge you do not want to finish, run: git merge --abort")
+        rail_print(f"{rail_icon('context')} Active Git operation: " + ", ".join(active_ops))
+    rail_print(f"{rail_icon('tip')} Run: git status --short")
+    rail_print("Resolve conflicts and commit the merge, or abort it before continuing.")
+    rail_print("If this is a merge you do not want to finish, run: git merge --abort")
 
 
 def print_default_branch_rail_tracking_warning(default_branch: str, current: str) -> None:
@@ -1451,6 +1570,8 @@ def cmd_release_check(argv: list[str]) -> int:
 def cmd_doctor(argv: list[str]) -> int:
     if not local_py().exists():
         print("No .rail/rail.py found. Run: rail init", file=sys.stderr)
+        if is_inside_work_tree() and not has_github_remote():
+            print_no_github_remote_guidance()
         return 1
     rc = delegate(["doctor", *argv])
     missing = []
@@ -1525,7 +1646,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"AI Rail {VERSION}")
             print("Daily: init, resume, plan, import, phase, next, handoff, verify, ship, snapshot, export")
             print("Aliases: r, n, p, ph, im, v, s, snap, h, hc, hg, hl, x, xd, xf, rc")
-            print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, clear-active, sync, log, report, ci-init, upgrade, about, demo, release-check")
+            print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, clear-active, sync, log, report, github-create, ci-init, upgrade, about, demo, release-check")
             return 0
         if argv[0] in {"--version", "version"}:
             print(render_version(), end="")
@@ -1539,6 +1660,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_upgrade(rest)
         if cmd == "doctor":
             return cmd_doctor(rest)
+        if cmd == "github-create":
+            return cmd_github_create(rest)
         if cmd in {"status", "active", "resume"}:
             return cmd_status(rest)
         if cmd == "next":

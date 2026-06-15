@@ -22,6 +22,36 @@ def current_branch(run_func: RunFunc) -> str:
     return result.stdout.strip() or "unknown"
 
 
+def git_available() -> bool:
+    return shutil.which("git") is not None
+
+
+def is_inside_work_tree(run_func: RunFunc) -> bool:
+    if not git_available():
+        return False
+    result = run_func(["git", "rev-parse", "--is-inside-work-tree"], 15)
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def has_git_dir(root_path: Path) -> bool:
+    return (root_path / ".git").exists()
+
+
+def remote_url(name: str, run_func: RunFunc) -> str | None:
+    if not git_available():
+        return None
+    result = run_func(["git", "remote", "get-url", name], 15)
+    url = result.stdout.strip()
+    return url if result.returncode == 0 and url else None
+
+
+def has_baseline_commit(run_func: RunFunc) -> bool:
+    if not git_available():
+        return False
+    result = run_func(["git", "rev-parse", "--verify", "--quiet", "HEAD"], 15)
+    return result.returncode == 0
+
+
 def changed_files(run_func: RunFunc) -> list[str]:
     entries = git_status_entries(run_func)
     return sorted(set(path for _status, path in entries if path))

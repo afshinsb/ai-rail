@@ -150,6 +150,112 @@ def install_fake_npm(path: Path, monkeypatch) -> None:
     monkeypatch.setitem(ENV, "PATH", str(fake_dir) + os.pathsep + ENV.get("PATH", existing_path))
 
 
+def test_init_outside_git_repo_prints_friendly_guidance(tmp_path: Path) -> None:
+    result = run_cli(tmp_path, "init")
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "AI Rail needs a Git repository." in output
+    assert "Current folder is not inside a Git repo." in output
+    assert "git init -b main" in output
+    assert "rail init --git-init" in output
+    assert "fatal:" not in output.lower()
+
+
+def test_init_git_init_creates_repo_and_initializes_rail(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+
+    result = run_cli(tmp_path, "init", "--git-init", "--stack", "static", "--project-name", "Demo")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert (tmp_path / ".git").exists()
+    assert (tmp_path / ".rail" / "rail.py").exists()
+    assert 'git commit -m "chore: initialize ai rail workflow"' in result.stdout
+    assert "No GitHub remote found." in result.stdout
+    assert "rail github-create --private" in result.stdout
+
+
+def test_init_in_git_repo_without_origin_prints_remote_guidance(tmp_path: Path) -> None:
+    git_init(tmp_path)
+
+    result = run_cli(tmp_path, "init", "--stack", "static")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "No GitHub remote found." in result.stdout
+    assert "gh repo create OWNER/PROJECT --private --source . --remote origin --push" in result.stdout
+    assert "rail github-create --public" in result.stdout
+
+
+def test_doctor_in_git_repo_without_origin_prints_remote_guidance(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    assert run_cli(tmp_path, "init", "--stack", "static").returncode == 0
+
+    result = run_cli(tmp_path, "doctor")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "No GitHub remote found." in result.stdout
+    assert "AI Rail can work locally" in result.stdout
+
+
+def test_github_create_requires_explicit_visibility(tmp_path: Path) -> None:
+    git_init(tmp_path)
+    result = run_cli(tmp_path, "github-create")
+
+    assert result.returncode != 0
+    assert "--private" in result.stderr
+    assert "--public" in result.stderr
+
+
+def test_github_create_refuses_without_baseline_commit(tmp_path: Path, monkeypatch, capsys) -> None:
+    git_init(tmp_path)
+    sys.path.insert(0, str(ROOT / "src"))
+    import ai_rail.cli as cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "gh_available", lambda: True)
+
+    result = cli.cmd_github_create(["--private"])
+    output = capsys.readouterr().out
+
+    assert result == 1
+    assert "baseline commit is required" in output
+    assert 'git commit -m "chore: initialize ai rail workflow"' in output
+
+
+def test_github_create_private_creates_repo_and_pushes(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    sys.path.insert(0, str(ROOT / "src"))
+    import ai_rail.cli as cli
+
+    real_run = cli.run
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["gh", "api", "user"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "test-owner\n", "")
+        if cmd[:3] == ["gh", "repo", "create"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, f"https://github.com/{cmd[3]}\n", "")
+        return real_run(cmd, timeout)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "gh_available", lambda: True)
+    monkeypatch.setattr(cli, "run", fake_run)
+
+    result = cli.cmd_github_create(["--private"])
+
+    assert result == 0
+    assert calls[0] == ["gh", "api", "user", "--jq", ".login"]
+    assert calls[1][:4] == ["gh", "repo", "create", f"test-owner/{tmp_path.name}"]
+    assert "--private" in calls[1]
+    assert "--public" not in calls[1]
+    assert calls[1][-5:] == ["--source", ".", "--remote", "origin", "--push"]
+
+
 def test_init_creates_node_config_with_fallback_check(tmp_path: Path) -> None:
     git_init(tmp_path)
     result = run_cli(tmp_path, "init", "--stack", "node", "--project-name", "Demo")

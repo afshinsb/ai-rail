@@ -619,6 +619,25 @@ def detect_repo_from_git_remote() -> str | None:
     return url
 
 
+def has_github_remote() -> bool:
+    if not git_available():
+        return False
+    result = run(["git", "remote", "get-url", "origin"], timeout=15)
+    url = result.stdout.strip()
+    return result.returncode == 0 and bool(re.search(r"github\.com[:/].+?(?:\.git)?$", url))
+
+
+def print_missing_github_remote_guidance() -> None:
+    print(f"{runtime_icon('warning')} No GitHub remote found.")
+    print(f"{runtime_icon('branch')} AI Rail can work locally, but GitHub issues/roadmap sync need a remote.")
+    print(f"{runtime_icon('tip')} Recommended:")
+    print("gh repo create OWNER/PROJECT --private --source . --remote origin --push")
+    print("rail init --clean-default")
+    print(f"{runtime_icon('tip')} Or let Rail create the GitHub repo:")
+    print("rail github-create --private")
+    print("rail github-create --public")
+
+
 def planning_identity() -> tuple[str, str]:
     cfg = load_config()
     project_name = str(cfg.get("project_name") or ROOT.name)
@@ -1226,6 +1245,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ref = db if git_ref_exists(db) else f"origin/{db}"
     if git_ref_exists(ref) and not rail_runtime_tracked_on_branch(ref):
         print_default_branch_rail_tracking_warning(db, current_branch())
+
+    if git_available() and not has_github_remote():
+        print("")
+        print_missing_github_remote_guidance()
 
     return 1 if missing else 0
 
