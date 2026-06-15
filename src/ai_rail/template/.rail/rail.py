@@ -232,6 +232,23 @@ def git_state_blocks_new_work(state: dict[str, Any]) -> bool:
     return bool(state.get("has_unresolved_conflicts") or state.get("has_active_git_operation"))
 
 
+def print_default_branch_rail_tracking_warning(default_branch_name: str, current: str) -> None:
+    print("\n.rail tracking warning:")
+    print(".rail/ is not tracked on the default branch.")
+    print("Ship/sync may remove local Rail runtime files.")
+    print("This matters because checkout/sync back to the default branch can remove the repo-local Rail runtime files.")
+    if current != default_branch_name:
+        print(f"You are currently on `{current}`, not the default branch `{default_branch_name}`.")
+    print("\nIf this branch is the desired project state:")
+    print("git add -A")
+    print('git commit -m "chore: initialize ai rail workflow"')
+    print(f"git push -u origin {current}")
+    print("\nIf Rail should be initialized on the default branch:")
+    print(f"git switch {default_branch_name}")
+    print("git pull")
+    print("rail init --clean-default")
+
+
 def is_dirty() -> bool:
     status = git_status_short()
     return bool(status and status != "git unavailable")
@@ -272,6 +289,15 @@ GENERATED_COMMIT_DIRS = {
     "__pycache__",
 }
 
+LEGACY_WORKFLOW_MARKERS = [
+    ".orchestra",
+    "orchestrator.py",
+    "tasks",
+    "AGENTS.md",
+    "ROADMAP.md",
+    "WORKFLOW.md",
+]
+
 
 def git_status_entries() -> list[tuple[str, str]]:
     """Return porcelain status/path pairs using NUL separators for robust paths."""
@@ -309,6 +335,83 @@ def changed_paths() -> list[str]:
 
 def untracked_paths() -> list[str]:
     return sorted(set(path for status, path in git_status_entries() if status == "??" and path))
+
+
+def normalize_git_path(path: str) -> str:
+    return path.replace("\\", "/").strip("/")
+
+
+def path_matches_marker(path: str, marker: str) -> bool:
+    normalized = normalize_git_path(path)
+    marker = marker.strip("/")
+    return normalized == marker or normalized.startswith(marker + "/")
+
+
+def is_rail_path(path: str) -> bool:
+    return path_matches_marker(path, ".rail")
+
+
+def is_legacy_workflow_path(path: str) -> bool:
+    return any(path_matches_marker(path, marker) for marker in LEGACY_WORKFLOW_MARKERS)
+
+
+def detected_legacy_workflow_artifacts(paths: list[str] | None = None) -> list[str]:
+    candidates = paths or []
+    found: set[str] = set()
+    for marker in LEGACY_WORKFLOW_MARKERS:
+        if (ROOT / marker).exists() or any(path_matches_marker(path, marker) for path in candidates):
+            found.add(marker)
+    return sorted(found)
+
+
+def grouped_dirty_status(limit: int = 20) -> dict[str, list[str]]:
+    groups = {
+        "Rail files": [],
+        "App/source files": [],
+        "Deleted legacy workflow files": [],
+        "Untracked legacy workflow files": [],
+        "Other untracked files": [],
+    }
+    if not git_available():
+        return groups
+    for status, path in git_status_entries():
+        if not path:
+            continue
+        item = f"{status} {path}"
+        if is_rail_path(path):
+            groups["Rail files"].append(item)
+        elif status == "??" and is_legacy_workflow_path(path):
+            groups["Untracked legacy workflow files"].append(item)
+        elif "D" in status and is_legacy_workflow_path(path):
+            groups["Deleted legacy workflow files"].append(item)
+        elif status == "??":
+            groups["Other untracked files"].append(item)
+        else:
+            groups["App/source files"].append(item)
+    return {name: sorted(items) for name, items in groups.items()}
+
+
+def print_grouped_dirty_status(limit: int = 20) -> None:
+    if not git_available():
+        print("Dirty files: git unavailable")
+        return
+    groups = grouped_dirty_status(limit=limit)
+    total = sum(len(items) for items in groups.values())
+    print(f"\nDirty files: {total}")
+    if total == 0:
+        return
+    for name, items in groups.items():
+        if not items:
+            continue
+        print(f"\n{name}: {len(items)}")
+        for item in items[:limit]:
+            print(f"  {item}")
+        hidden = len(items) - limit
+        if hidden > 0:
+            print(f"  ... {hidden} more hidden")
+    legacy = detected_legacy_workflow_artifacts([item[3:] for items in groups.values() for item in items])
+    if legacy:
+        print("\nLegacy workflow artifacts detected. If you are migrating to AI Rail, commit the deletion and `.rail/` addition together as a deliberate workflow migration.")
 
 
 def is_dangerous_commit_path(rel_path: str) -> bool:
@@ -1090,6 +1193,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print("\nActive issue: none")
 
+    db = default_branch()
+    ref = db if git_ref_exists(db) else f"origin/{db}"
+    if git_ref_exists(ref) and not rail_runtime_tracked_on_branch(ref):
+        print_default_branch_rail_tracking_warning(db, current_branch())
+
     return 1 if missing else 0
 
 
@@ -1127,11 +1235,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         print(f"Checks result: {check_state}")
 
-    status = git_status_short()
-    count = dirty_count()
-    print(f"\nDirty files: {count}")
-    if status:
-        print(status)
+    print_grouped_dirty_status()
 
     print("\nNext suggestion:")
     print(next_suggestion())

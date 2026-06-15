@@ -7,6 +7,15 @@ from typing import Any, Callable
 
 RunFunc = Callable[[list[str], int], subprocess.CompletedProcess[str]]
 
+LEGACY_WORKFLOW_MARKERS = [
+    ".orchestra",
+    "orchestrator.py",
+    "tasks",
+    "AGENTS.md",
+    "ROADMAP.md",
+    "WORKFLOW.md",
+]
+
 
 def current_branch(run_func: RunFunc) -> str:
     result = run_func(["git", "branch", "--show-current"], 15)
@@ -14,11 +23,16 @@ def current_branch(run_func: RunFunc) -> str:
 
 
 def changed_files(run_func: RunFunc) -> list[str]:
+    entries = git_status_entries(run_func)
+    return sorted(set(path for _status, path in entries if path))
+
+
+def git_status_entries(run_func: RunFunc) -> list[tuple[str, str]]:
     result = run_func(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], 30)
     if result.returncode != 0:
         message = result.stderr.strip() or result.stdout.strip() or "git status failed."
         raise RuntimeError(f"Could not inspect changed files: {message}")
-    files: list[str] = []
+    entries: list[tuple[str, str]] = []
     parts = result.stdout.split("\0")
     i = 0
     while i < len(parts):
@@ -29,13 +43,13 @@ def changed_files(run_func: RunFunc) -> list[str]:
         status = entry[:2]
         path = entry[3:] if len(entry) > 3 else ""
         if path:
-            files.append(path)
+            entries.append((status, path))
         if "R" in status or "C" in status:
             i += 1
             if i < len(parts) and parts[i]:
-                files.append(parts[i])
+                entries.append((status, parts[i]))
         i += 1
-    return sorted(set(files))
+    return entries
 
 
 def untracked_files(run_func: RunFunc) -> list[str]:
@@ -43,6 +57,67 @@ def untracked_files(run_func: RunFunc) -> list[str]:
     if result.returncode != 0:
         return []
     return sorted(line for line in result.stdout.splitlines() if line.strip())
+
+
+def normalize_git_path(path: str) -> str:
+    return path.replace("\\", "/").strip("/")
+
+
+def path_matches_marker(path: str, marker: str) -> bool:
+    normalized = normalize_git_path(path)
+    marker = marker.strip("/")
+    return normalized == marker or normalized.startswith(marker + "/")
+
+
+def detected_legacy_workflow_artifacts(root_path: Path, paths: list[str] | None = None) -> list[str]:
+    candidates = paths or []
+    found: set[str] = set()
+    for marker in LEGACY_WORKFLOW_MARKERS:
+        if (root_path / marker).exists() or any(path_matches_marker(path, marker) for path in candidates):
+            found.add(marker)
+    return sorted(found)
+
+
+def init_dirty_inspection(root_path: Path, default_branch: str, run_func: RunFunc) -> dict[str, Any]:
+    if not shutil.which("git"):
+        return {
+            "git_available": False,
+            "current_branch": "unknown",
+            "default_branch": default_branch,
+            "on_default_branch": False,
+            "dirty_tracked_files": [],
+            "deleted_tracked_files": [],
+            "untracked_files": [],
+            "dirty_file_count": 0,
+            "deleted_file_count": 0,
+            "untracked_file_count": 0,
+            "rail_exists": (root_path / ".rail").exists(),
+            "legacy_artifacts": detected_legacy_workflow_artifacts(root_path),
+            "is_dirty": False,
+        }
+    entries = git_status_entries(run_func)
+    dirty_tracked = sorted(
+        set(path for status, path in entries if status != "??" and path and "D" not in status)
+    )
+    deleted_tracked = sorted(set(path for status, path in entries if status != "??" and path and "D" in status))
+    untracked = sorted(set(path for status, path in entries if status == "??" and path))
+    current = current_branch(run_func)
+    all_paths = [path for _status, path in entries if path]
+    return {
+        "git_available": True,
+        "current_branch": current,
+        "default_branch": default_branch,
+        "on_default_branch": current == default_branch,
+        "dirty_tracked_files": dirty_tracked,
+        "deleted_tracked_files": deleted_tracked,
+        "untracked_files": untracked,
+        "dirty_file_count": len(dirty_tracked),
+        "deleted_file_count": len(deleted_tracked),
+        "untracked_file_count": len(untracked),
+        "rail_exists": (root_path / ".rail").exists(),
+        "legacy_artifacts": detected_legacy_workflow_artifacts(root_path, all_paths),
+        "is_dirty": bool(dirty_tracked or deleted_tracked or untracked),
+    }
 
 
 def is_probably_text_file(path: Path, max_bytes: int = 20000) -> bool:

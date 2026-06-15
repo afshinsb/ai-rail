@@ -38,6 +38,7 @@ class TemplateContext:
     detect_repo_from_tools: Callable[[], str | None]
     branch_exists: Callable[[Any], bool]
     detect_default_branch: Callable[[], str]
+    init_dirty_inspection: Callable[[str], dict[str, Any]]
     version: str
 
 
@@ -138,13 +139,133 @@ def print_install_summary(summary: dict[str, Any]) -> None:
         print("- Preserved protected project/user files: " + ", ".join(summary["preserved_files"]))
 
 
+def print_init_dirty_warning(inspection: dict[str, Any]) -> None:
+    legacy = inspection.get("legacy_artifacts") or []
+    print("Warning: repository has existing work before AI Rail init.")
+    print(f"- Current branch: {inspection.get('current_branch')}")
+    print(f"- Default branch: {inspection.get('default_branch')}")
+    if not inspection.get("on_default_branch"):
+        print("- Current branch differs from default branch.")
+    print(f"- Dirty tracked files: {inspection.get('dirty_file_count', 0)}")
+    print(f"- Deleted tracked files: {inspection.get('deleted_file_count', 0)}")
+    print(f"- Untracked files/directories: {inspection.get('untracked_file_count', 0)}")
+    print(f"- Existing .rail/: {'yes' if inspection.get('rail_exists') else 'no'}")
+    print(f"- Legacy workflow artifacts: {', '.join(legacy) if legacy else 'none'}")
+    print("")
+    print("Rail can initialize here, but you must commit, adopt, or clean this repository state intentionally.")
+    if legacy:
+        print("Legacy workflow artifacts detected. If you are migrating to AI Rail, commit the deletion and `.rail/` addition together as a deliberate workflow migration.")
+
+
+def print_init_git_next_commands(inspection: dict[str, Any], *, adopt: bool = False) -> None:
+    current = inspection.get("current_branch") or "CURRENT_BRANCH"
+    default = inspection.get("default_branch") or "DEFAULT_BRANCH"
+    if adopt:
+        print("\nTreating the current dirty repository as the intended baseline.")
+    print("\nRecommended Git commands:")
+    if adopt:
+        print('git add -A')
+        print('git commit -m "chore: initialize ai rail workflow"')
+        print('git push')
+        return
+    print("git status --short")
+    print("git add -A")
+    print('git commit -m "chore: initialize ai rail workflow"')
+    if inspection.get("on_default_branch"):
+        print("git push")
+    else:
+        print(f"git push -u origin {current}")
+        print("")
+        print("If Rail should be initialized on the default branch instead:")
+        print(f"git switch {default}")
+        print("git pull")
+        print("rail init --clean-default")
+
+
+BENIGN_INIT_UNTRACKED_FILES = {
+    "README.md",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.py",
+    "setup.cfg",
+}
+RAIL_INIT_ROOT_FILES = {
+    "Makefile",
+}
+LARGE_INIT_UNTRACKED_SET = 20
+
+
+def init_has_installed_rail(ctx: TemplateContext) -> bool:
+    return ctx.local_py().exists() and (ctx.rail_dir() / "config.json").exists()
+
+
+def significant_init_untracked(inspection: dict[str, Any], *, existing_install: bool) -> list[str]:
+    significant: list[str] = []
+    for path in inspection.get("untracked_files") or []:
+        normalized = str(path).replace("\\", "/").strip("/")
+        if existing_install and (normalized == ".rail" or normalized.startswith(".rail/")):
+            continue
+        if existing_install and normalized in RAIL_INIT_ROOT_FILES:
+            continue
+        if normalized in BENIGN_INIT_UNTRACKED_FILES:
+            continue
+        significant.append(normalized)
+    return sorted(significant)
+
+
+def init_requires_dirty_flag(inspection: dict[str, Any], ctx: TemplateContext) -> bool:
+    existing_install = init_has_installed_rail(ctx)
+    significant_untracked = significant_init_untracked(inspection, existing_install=existing_install)
+    if inspection.get("dirty_tracked_files") or inspection.get("deleted_tracked_files"):
+        return True
+    if inspection.get("legacy_artifacts"):
+        return True
+    if inspection.get("rail_exists") and not existing_install:
+        return True
+    if not inspection.get("on_default_branch") and (inspection.get("is_dirty") or inspection.get("rail_exists")):
+        return True
+    if len(significant_untracked) > LARGE_INIT_UNTRACKED_SET:
+        return True
+    return bool(significant_untracked)
+
+
 def cmd_init(argv: list[str], ctx: TemplateContext) -> int:
     parser = argparse.ArgumentParser(prog="rail init")
     parser.add_argument("--stack", choices=["node", "python", "static"], default="node")
     parser.add_argument("--project-name")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--refresh-config", action="store_true", help="Re-detect safe config defaults without replacing state.")
+    parser.add_argument("--allow-dirty", action="store_true", help="Initialize even when the working tree is dirty.")
+    parser.add_argument("--adopt-dirty", action="store_true", help="Initialize and treat current dirty work as the intended baseline.")
+    parser.add_argument("--clean-default", action="store_true", help="Refuse unless on the clean default branch.")
     ns = parser.parse_args(argv)
+
+    if sum(bool(value) for value in [ns.allow_dirty, ns.adopt_dirty, ns.clean_default]) > 1:
+        print("Error: choose only one of --allow-dirty, --adopt-dirty, or --clean-default.", file=sys.stderr)
+        return 1
+
+    default_branch = ctx.detect_default_branch()
+    inspection = ctx.init_dirty_inspection(default_branch)
+    requires_dirty_flag = init_requires_dirty_flag(inspection, ctx)
+    if ns.clean_default and (not inspection.get("on_default_branch") or inspection.get("is_dirty") or inspection.get("rail_exists")):
+        print("Error: rail init --clean-default requires the current branch to be the clean default branch.")
+        print_init_dirty_warning(inspection)
+        return 1
+    if requires_dirty_flag and not (ns.allow_dirty or ns.adopt_dirty or ns.force):
+        print_init_dirty_warning(inspection)
+        print("")
+        print("Run one of:")
+        print("rail init --allow-dirty   # initialize without hiding existing work")
+        print("rail init --adopt-dirty   # initialize and adopt this dirty state as the intended baseline")
+        print("rail init --clean-default # initialize only from a clean default branch")
+        return 1
+    if inspection.get("is_dirty") or inspection.get("rail_exists") or inspection.get("legacy_artifacts"):
+        print_init_dirty_warning(inspection)
+        print("")
 
     cfg_path = ctx.rail_dir() / "config.json"
     had_config = cfg_path.exists()
@@ -184,6 +305,8 @@ def cmd_init(argv: list[str], ctx: TemplateContext) -> int:
     print("\nNext:")
     print("rail doctor")
     print("rail status")
+    if ns.allow_dirty or ns.adopt_dirty:
+        print_init_git_next_commands(inspection, adopt=ns.adopt_dirty)
     return 0
 
 

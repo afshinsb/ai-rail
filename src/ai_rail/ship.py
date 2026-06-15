@@ -187,12 +187,22 @@ def run_ship(ns: argparse.Namespace, ctx: ShipContext) -> int:
         print_git_state_blocked(ctx, state)
         ctx.rail_print(f"{ctx.rail_icon('info')} Ship stopped before updating .rail/PROJECT.md, committing, pushing, closing issues, or syncing.")
         return 1
-    if current == default_branch:
+    head = ctx.run(["git", "rev-parse", "--verify", "HEAD"], timeout=15)
+    has_head = head.returncode == 0
+    manual_local_ship = (
+        getattr(ns, "no_merge", False)
+        or (
+            getattr(ns, "no_push", False)
+            and getattr(ns, "no_close", False)
+            and getattr(ns, "no_done", False)
+            and getattr(ns, "no_sync", False)
+        )
+    )
+    if has_head and current == default_branch and not manual_local_ship:
         ctx.rail_print(f"{ctx.rail_icon('error')} Ship expects an issue branch, but you are on the default branch `{default_branch}`.")
         ctx.rail_print(f"{ctx.rail_icon('info')} Ship stopped before updating .rail/PROJECT.md, committing, pushing, closing issues, or syncing.")
         ctx.rail_print(f"{ctx.rail_icon('tip')} Checkout the issue branch and rerun `rail ship`, or use manual close/sync commands if the merge was already completed.")
         return 1
-
     active_before_ship = ctx.active()
     project_path = ctx.rail_dir() / "PROJECT.md"
     project_memory_before_ship: str | None = None

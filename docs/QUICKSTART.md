@@ -44,6 +44,8 @@ rail init --stack python
 rail init --stack static
 ```
 
+If the repo already has uncommitted work, `rail init` pauses before writing files. Use `rail init --allow-dirty` to initialize anyway, `rail init --adopt-dirty` to treat the current dirty branch as the intended baseline, or `rail init --clean-default` when setup must happen only on a clean default branch.
+
 ## Daily loop
 
 For a new repo with no scoped GitHub Issues yet, generate a planning prompt first:

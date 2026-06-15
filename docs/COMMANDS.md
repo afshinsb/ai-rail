@@ -96,6 +96,12 @@ rail upgrade
 
 Use `rail upgrade --refresh-config` to also re-detect safe config defaults such as repository, default branch, and checks.
 
+## Init Safety
+
+`rail init` inspects Git before writing files. On a clean repo it initializes normally. On a dirty repo it stops and reports the current branch, default branch, dirty/deleted/untracked counts, existing `.rail/`, and legacy workflow artifacts.
+
+Use `rail init --allow-dirty` to initialize anyway without hiding the dirty state. Use `rail init --adopt-dirty` when the current dirty branch is the intended baseline and you plan to commit the Rail files and existing work together. Use `rail init --clean-default` for first setup that must happen only on a clean default branch.
+
 ## Common Workflows
 
 ### Normal Implementation

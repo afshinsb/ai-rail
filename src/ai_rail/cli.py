@@ -59,6 +59,7 @@ from ai_rail.git_ops import (
     changed_files as git_changed_files,
     current_branch as git_current_branch,
     git_diff_for_fingerprint as git_diff_for_fingerprint_impl,
+    init_dirty_inspection as git_init_dirty_inspection,
     git_ref_exists as git_ref_exists_impl,
     git_safety_preflight as git_safety_preflight_impl,
     git_status_porcelain as git_status_porcelain_impl,
@@ -472,6 +473,7 @@ def template_context() -> TemplateContext:
         detect_repo_from_tools=detect_repo_from_tools,
         branch_exists=branch_exists,
         detect_default_branch=detect_default_branch,
+        init_dirty_inspection=lambda default_branch: git_init_dirty_inspection(root(), default_branch, run),
         version=VERSION,
     )
 
@@ -1294,6 +1296,23 @@ def print_git_state_blocked(action: str, state: dict[str, Any]) -> None:
     print("If this is a merge you do not want to finish, run: git merge --abort")
 
 
+def print_default_branch_rail_tracking_warning(default_branch: str, current: str) -> None:
+    print("\n[rail] .rail tracking warning:")
+    print(".rail/ is not tracked on the default branch.")
+    print("Ship/sync may remove local Rail runtime files.")
+    print("This matters because checkout/sync back to the default branch can remove the repo-local Rail runtime files.")
+    if current != default_branch:
+        print(f"You are currently on `{current}`, not the default branch `{default_branch}`.")
+    print("\nIf this branch is the desired project state:")
+    print("git add -A")
+    print('git commit -m "chore: initialize ai rail workflow"')
+    print(f"git push -u origin {current}")
+    print("\nIf Rail should be initialized on the default branch:")
+    print(f"git switch {default_branch}")
+    print("git pull")
+    print("rail init --clean-default")
+
+
 def cfg() -> dict[str, Any]:
     return read_json(rail_dir() / "config.json", {})
 
@@ -1483,9 +1502,7 @@ def cmd_doctor(argv: list[str]) -> int:
         default_branch = str(config.get("default_branch"))
         ref = default_branch if git_ref_exists(default_branch) else f"origin/{default_branch}"
         if git_ref_exists(ref) and not rail_runtime_tracked_on_branch(ref):
-            print("\n[rail] .rail tracking warning:")
-            print(".rail/ is not tracked on the default branch. Ship/sync may remove local Rail runtime files.")
-            print("Commit .rail/ or keep sync manual.")
+            print_default_branch_rail_tracking_warning(default_branch, current_branch())
     if checks == ["npm run check"] and scripts and "check" not in scripts:
         replacement = suggested_node_check_replacement()
         print("\n[rail] Check configuration warning:")
