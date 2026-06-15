@@ -126,7 +126,7 @@ from ai_rail.template_ops import (
     print_install_summary,
 )
 
-VERSION = "0.1.0a16"
+VERSION = "0.1.0a17"
 PROJECT_DESCRIPTION = "A local-first workflow rail and portable project brain for AI-assisted development."
 AUTHOR_NAME = "Afshin Saberi"
 PROJECT_REPOSITORY = "https://github.com/afshinsb/ai-rail"
@@ -1297,20 +1297,19 @@ def print_git_state_blocked(action: str, state: dict[str, Any]) -> None:
 
 
 def print_default_branch_rail_tracking_warning(default_branch: str, current: str) -> None:
-    print("\n[rail] .rail tracking warning:")
-    print(".rail/ is not tracked on the default branch.")
-    print("Ship/sync may remove local Rail runtime files.")
-    print("This matters because checkout/sync back to the default branch can remove the repo-local Rail runtime files.")
+    rail_print(f"\n{rail_icon('warning')} .rail/ is not tracked on the default branch.")
+    rail_print("Ship/sync may remove local Rail runtime files.")
+    rail_print("Checkout or sync can remove the repo-local Rail runtime when `.rail/` only exists on this branch.")
     if current != default_branch:
-        print(f"You are currently on `{current}`, not the default branch `{default_branch}`.")
-    print("\nIf this branch is the desired project state:")
-    print("git add -A")
-    print('git commit -m "chore: initialize ai rail workflow"')
-    print(f"git push -u origin {current}")
-    print("\nIf Rail should be initialized on the default branch:")
-    print(f"git switch {default_branch}")
-    print("git pull")
-    print("rail init --clean-default")
+        rail_print(f"{rail_icon('info')} Current branch: `{current}` | default branch: `{default_branch}`")
+    rail_print(f"\n{rail_icon('tip')} If this branch is intentional:")
+    rail_print("git add -A")
+    rail_print('git commit -m "chore: initialize ai rail workflow"')
+    rail_print(f"git push -u origin {current}")
+    rail_print(f"\n{rail_icon('tip')} If setup should happen on the default branch:")
+    rail_print(f"git switch {default_branch}")
+    rail_print("git pull")
+    rail_print("rail init --clean-default")
 
 
 def cfg() -> dict[str, Any]:
@@ -1498,11 +1497,6 @@ def cmd_doctor(argv: list[str]) -> int:
         print(f"Configured default_branch `{config.get('default_branch')}` was not found.")
         print(f"Detected default branch: `{detected}`.")
         print("Recommended: rail init --refresh-config")
-    elif config.get("default_branch"):
-        default_branch = str(config.get("default_branch"))
-        ref = default_branch if git_ref_exists(default_branch) else f"origin/{default_branch}"
-        if git_ref_exists(ref) and not rail_runtime_tracked_on_branch(ref):
-            print_default_branch_rail_tracking_warning(default_branch, current_branch())
     if checks == ["npm run check"] and scripts and "check" not in scripts:
         replacement = suggested_node_check_replacement()
         print("\n[rail] Check configuration warning:")

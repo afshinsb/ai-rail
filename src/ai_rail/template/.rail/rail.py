@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.0a16"
+VERSION = "0.1.0a17"
 
 RAIL_DIR = Path(__file__).resolve().parent
 ROOT = RAIL_DIR.parent
@@ -232,18 +232,44 @@ def git_state_blocks_new_work(state: dict[str, Any]) -> bool:
     return bool(state.get("has_unresolved_conflicts") or state.get("has_active_git_operation"))
 
 
+RUNTIME_ICONS = {
+    "warning": "⚠️",
+    "tip": "💡",
+    "branch": "🧭",
+}
+RUNTIME_ICON_FALLBACKS = {
+    "warning": "Warning:",
+    "tip": "Next:",
+    "branch": "Branch:",
+}
+
+
+def stream_can_encode_text(text: str, stream: Any | None = None) -> bool:
+    stream = sys.stdout if stream is None else stream
+    encoding = getattr(stream, "encoding", None) or sys.getdefaultencoding() or "utf-8"
+    try:
+        text.encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return False
+    return True
+
+
+def runtime_icon(kind: str, stream: Any | None = None) -> str:
+    icon = RUNTIME_ICONS[kind]
+    return icon if stream_can_encode_text(icon, stream) else RUNTIME_ICON_FALLBACKS[kind]
+
+
 def print_default_branch_rail_tracking_warning(default_branch_name: str, current: str) -> None:
-    print("\n.rail tracking warning:")
-    print(".rail/ is not tracked on the default branch.")
+    print(f"\n{runtime_icon('warning')} .rail/ is not tracked on the default branch.")
     print("Ship/sync may remove local Rail runtime files.")
-    print("This matters because checkout/sync back to the default branch can remove the repo-local Rail runtime files.")
+    print("Checkout or sync can remove the repo-local Rail runtime when `.rail/` only exists on this branch.")
     if current != default_branch_name:
-        print(f"You are currently on `{current}`, not the default branch `{default_branch_name}`.")
-    print("\nIf this branch is the desired project state:")
+        print(f"{runtime_icon('branch')} Current branch: `{current}` | default branch: `{default_branch_name}`")
+    print(f"\n{runtime_icon('tip')} If this branch is intentional:")
     print("git add -A")
     print('git commit -m "chore: initialize ai rail workflow"')
     print(f"git push -u origin {current}")
-    print("\nIf Rail should be initialized on the default branch:")
+    print(f"\n{runtime_icon('tip')} If setup should happen on the default branch:")
     print(f"git switch {default_branch_name}")
     print("git pull")
     print("rail init --clean-default")

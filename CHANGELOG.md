@@ -4,6 +4,8 @@ Maintained by Afshin Saberi.
 
 ## Unreleased / 0.1.0a17
 
+- Added safer dirty-repo `rail init` guidance for branch/default-branch setup and legacy workflow migration.
+- Improved `rail doctor` guidance when `.rail/` exists only off the default branch, while keeping compatibility wording.
 - Roadmap mirror issues are now explicitly protected and labeled `ai-rail-roadmap`.
 - `rail import` gives a recovery hint when the roadmap mirror issue was accidentally closed.
 - `rail doctor` warns if the roadmap mirror issue appears as a normal roadmap task.

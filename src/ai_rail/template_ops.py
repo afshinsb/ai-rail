@@ -139,30 +139,60 @@ def print_install_summary(summary: dict[str, Any]) -> None:
         print("- Preserved protected project/user files: " + ", ".join(summary["preserved_files"]))
 
 
+INIT_ICONS = {
+    "error": "❌",
+    "warning": "⚠️",
+    "success": "✅",
+    "tip": "💡",
+    "branch": "🧭",
+}
+INIT_ICON_FALLBACKS = {
+    "error": "Error:",
+    "warning": "Warning:",
+    "success": "OK:",
+    "tip": "Next:",
+    "branch": "Branch:",
+}
+
+
+def stream_can_encode_text(text: str, stream: Any | None = None) -> bool:
+    stream = sys.stdout if stream is None else stream
+    encoding = getattr(stream, "encoding", None) or sys.getdefaultencoding() or "utf-8"
+    try:
+        text.encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return False
+    return True
+
+
+def init_icon(kind: str, stream: Any | None = None) -> str:
+    icon = INIT_ICONS[kind]
+    return icon if stream_can_encode_text(icon, stream) else INIT_ICON_FALLBACKS[kind]
+
+
 def print_init_dirty_warning(inspection: dict[str, Any]) -> None:
     legacy = inspection.get("legacy_artifacts") or []
-    print("Warning: repository has existing work before AI Rail init.")
-    print(f"- Current branch: {inspection.get('current_branch')}")
-    print(f"- Default branch: {inspection.get('default_branch')}")
+    print(f"{init_icon('warning')} AI Rail found existing repository work before init.")
+    print(f"{init_icon('branch')} Current branch: {inspection.get('current_branch')} | default branch: {inspection.get('default_branch')}")
     if not inspection.get("on_default_branch"):
-        print("- Current branch differs from default branch.")
+        print(f"{init_icon('warning')} You are not on the default branch.")
     print(f"- Dirty tracked files: {inspection.get('dirty_file_count', 0)}")
     print(f"- Deleted tracked files: {inspection.get('deleted_file_count', 0)}")
     print(f"- Untracked files/directories: {inspection.get('untracked_file_count', 0)}")
     print(f"- Existing .rail/: {'yes' if inspection.get('rail_exists') else 'no'}")
     print(f"- Legacy workflow artifacts: {', '.join(legacy) if legacy else 'none'}")
     print("")
-    print("Rail can initialize here, but you must commit, adopt, or clean this repository state intentionally.")
+    print("AI Rail can initialize here, but this repo state should be adopted or cleaned intentionally.")
     if legacy:
-        print("Legacy workflow artifacts detected. If you are migrating to AI Rail, commit the deletion and `.rail/` addition together as a deliberate workflow migration.")
+        print(f"{init_icon('warning')} Legacy workflow artifacts detected. If you are migrating to AI Rail, commit the deletion and `.rail/` addition together as a deliberate workflow migration.")
 
 
 def print_init_git_next_commands(inspection: dict[str, Any], *, adopt: bool = False) -> None:
     current = inspection.get("current_branch") or "CURRENT_BRANCH"
     default = inspection.get("default_branch") or "DEFAULT_BRANCH"
     if adopt:
-        print("\nTreating the current dirty repository as the intended baseline.")
-    print("\nRecommended Git commands:")
+        print(f"\n{init_icon('success')} Treating the current dirty repository as the intended baseline.")
+    print(f"\n{init_icon('tip')} Recommended Git commands:")
     if adopt:
         print('git add -A')
         print('git commit -m "chore: initialize ai rail workflow"')
@@ -176,7 +206,7 @@ def print_init_git_next_commands(inspection: dict[str, Any], *, adopt: bool = Fa
     else:
         print(f"git push -u origin {current}")
         print("")
-        print("If Rail should be initialized on the default branch instead:")
+        print(f"{init_icon('tip')} If Rail should be initialized on the default branch instead:")
         print(f"git switch {default}")
         print("git pull")
         print("rail init --clean-default")
@@ -245,20 +275,20 @@ def cmd_init(argv: list[str], ctx: TemplateContext) -> int:
     ns = parser.parse_args(argv)
 
     if sum(bool(value) for value in [ns.allow_dirty, ns.adopt_dirty, ns.clean_default]) > 1:
-        print("Error: choose only one of --allow-dirty, --adopt-dirty, or --clean-default.", file=sys.stderr)
+        print(f"{init_icon('error', sys.stderr)} Choose only one of --allow-dirty, --adopt-dirty, or --clean-default.", file=sys.stderr)
         return 1
 
     default_branch = ctx.detect_default_branch()
     inspection = ctx.init_dirty_inspection(default_branch)
     requires_dirty_flag = init_requires_dirty_flag(inspection, ctx)
     if ns.clean_default and (not inspection.get("on_default_branch") or inspection.get("is_dirty") or inspection.get("rail_exists")):
-        print("Error: rail init --clean-default requires the current branch to be the clean default branch.")
+        print(f"{init_icon('error')} rail init --clean-default requires the current branch to be the clean default branch.")
         print_init_dirty_warning(inspection)
         return 1
     if requires_dirty_flag and not (ns.allow_dirty or ns.adopt_dirty or ns.force):
         print_init_dirty_warning(inspection)
         print("")
-        print("Run one of:")
+        print(f"{init_icon('tip')} Run one of:")
         print("rail init --allow-dirty   # initialize without hiding existing work")
         print("rail init --adopt-dirty   # initialize and adopt this dirty state as the intended baseline")
         print("rail init --clean-default # initialize only from a clean default branch")
