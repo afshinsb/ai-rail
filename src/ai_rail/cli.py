@@ -656,7 +656,29 @@ def create_github_repo_and_push(repo: str, visibility_flag: str) -> tuple[int, s
             rail_print(message)
         return create.returncode or 1, None
     repo_url = create.stdout.strip() or create.stderr.strip() or git_remote_url("origin", run) or f"https://github.com/{repo}"
+    if not git_remote_url("origin", run):
+        add_origin = run(["git", "remote", "add", "origin", f"https://github.com/{repo}.git"], timeout=30)
+        if add_origin.returncode != 0:
+            rail_print(f"{rail_icon('error')} GitHub repo was created, but origin could not be added.")
+            message = (add_origin.stderr or add_origin.stdout).strip()
+            if message:
+                rail_print(message)
+            return add_origin.returncode or 1, None
     return 0, repo_url
+
+
+def push_current_branch() -> int:
+    branch = current_branch()
+    upstream = run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], timeout=15)
+    push_cmd = ["git", "push"] if upstream.returncode == 0 and upstream.stdout.strip() else ["git", "push", "-u", "origin", branch]
+    push = run(push_cmd, timeout=120)
+    if push.returncode != 0:
+        rail_print(f"{rail_icon('error')} Could not push `{branch}`.")
+        message = (push.stderr or push.stdout).strip()
+        if message:
+            rail_print(message)
+        return push.returncode or 1
+    return 0
 
 
 def cmd_github_create(argv: list[str]) -> int:
@@ -763,7 +785,6 @@ def cmd_bootstrap(argv: list[str]) -> int:
         return 1
 
     if not has_baseline_commit():
-        paths = changed_files()
         rc = git_commit_all("chore: initial project baseline", allow_empty=True)
         if rc != 0:
             return rc
@@ -779,7 +800,17 @@ def cmd_bootstrap(argv: list[str]) -> int:
             rail_print(f"{rail_icon('tip')} Commit or stash existing changes, then rerun rail bootstrap.")
             return 1
 
-    init_args = ["--stack", ns.stack, "--clean-default"]
+    visibility_flag = "--public" if ns.public else "--private"
+    repo = detected_or_requested_repo(ns.repo, visibility_flag, "bootstrap")
+    if not repo:
+        return 1
+    branch = current_branch()
+    rc, repo_url = create_github_repo_and_push(repo, visibility_flag)
+    if rc != 0:
+        return rc
+    rail_print(f"{rail_icon('success')} Created GitHub repo and pushed baseline from `{branch}`.")
+
+    init_args = ["--stack", ns.stack, "--clean-default", "--quiet-next"]
     if ns.project_name:
         init_args.extend(["--project-name", ns.project_name])
     rc = cmd_init(init_args)
@@ -799,13 +830,7 @@ def cmd_bootstrap(argv: list[str]) -> int:
         if rc != 0:
             return rc
         rail_print(f"{rail_icon('success')} Committed AI Rail workflow files.")
-
-    visibility_flag = "--public" if ns.public else "--private"
-    repo = detected_or_requested_repo(ns.repo, visibility_flag, "bootstrap")
-    if not repo:
-        return 1
-    branch = current_branch()
-    rc, repo_url = create_github_repo_and_push(repo, visibility_flag)
+    rc = push_current_branch()
     if rc != 0:
         return rc
     rail_print(f"{rail_icon('success')} Bootstrap complete.")

@@ -270,7 +270,7 @@ def test_github_create_private_creates_repo_and_pushes(tmp_path: Path, monkeypat
     assert calls[1][-5:] == ["--source", ".", "--remote", "origin", "--push"]
 
 
-def test_bootstrap_private_creates_baseline_initializes_rail_and_pushes(tmp_path: Path, monkeypatch) -> None:
+def test_bootstrap_private_creates_baseline_initializes_rail_and_pushes(tmp_path: Path, monkeypatch, capsys) -> None:
     (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
     sys.path.insert(0, str(ROOT / "src"))
     import ai_rail.cli as cli
@@ -287,6 +287,9 @@ def test_bootstrap_private_creates_baseline_initializes_rail_and_pushes(tmp_path
             return subprocess.CompletedProcess(cmd, 0, f"https://github.com/{cmd[3]}\n", "")
         if cmd[:3] == ["gh", "repo", "view"]:
             return subprocess.CompletedProcess(cmd, 1, "", "not found")
+        if cmd[:2] == ["git", "push"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "pushed\n", "")
         return real_run(cmd, timeout)
 
     monkeypatch.chdir(tmp_path)
@@ -298,17 +301,25 @@ def test_bootstrap_private_creates_baseline_initializes_rail_and_pushes(tmp_path
     monkeypatch.setattr(cli, "run", fake_run)
 
     result = cli.cmd_bootstrap(["--private", "--stack", "static", "--project-name", "Demo"])
+    output = capsys.readouterr().out
 
     assert result == 0
     assert (tmp_path / ".git").exists()
     assert (tmp_path / ".rail" / "rail.py").exists()
+    cfg = json.loads((tmp_path / ".rail" / "config.json").read_text(encoding="utf-8"))
+    assert cfg["repository"] == f"test-owner/{tmp_path.name}"
     log = subprocess.run(["git", "log", "--format=%s"], cwd=tmp_path, capture_output=True, text=True, check=True)
     assert "chore: initial project baseline" in log.stdout
     assert "chore: initialize ai rail workflow" in log.stdout
-    assert calls[-1][:4] == ["gh", "repo", "create", f"test-owner/{tmp_path.name}"]
-    assert "--private" in calls[-1]
-    assert "--public" not in calls[-1]
-    assert calls[-1][-5:] == ["--source", ".", "--remote", "origin", "--push"]
+    create_call = next(cmd for cmd in calls if cmd[:3] == ["gh", "repo", "create"])
+    assert create_call[:4] == ["gh", "repo", "create", f"test-owner/{tmp_path.name}"]
+    assert "--private" in create_call
+    assert "--public" not in create_call
+    assert create_call[-5:] == ["--source", ".", "--remote", "origin", "--push"]
+    assert any(cmd[:2] == ["git", "push"] for cmd in calls)
+    assert "No GitHub remote found" not in output
+    assert "Next:\nrail doctor\nrail status" not in output
+    assert "Checks: none detected" in output
 
 
 def test_bootstrap_public_is_explicit(tmp_path: Path, monkeypatch) -> None:
@@ -329,6 +340,9 @@ def test_bootstrap_public_is_explicit(tmp_path: Path, monkeypatch) -> None:
             return subprocess.CompletedProcess(cmd, 0, f"https://github.com/{cmd[3]}\n", "")
         if cmd[:3] == ["gh", "repo", "view"]:
             return subprocess.CompletedProcess(cmd, 1, "", "not found")
+        if cmd[:2] == ["git", "push"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "pushed\n", "")
         return real_run(cmd, timeout)
 
     monkeypatch.chdir(tmp_path)
@@ -338,8 +352,9 @@ def test_bootstrap_public_is_explicit(tmp_path: Path, monkeypatch) -> None:
     result = cli.cmd_bootstrap(["--public", "--stack", "static"])
 
     assert result == 0
-    assert "--public" in calls[-1]
-    assert "--private" not in calls[-1]
+    create_call = next(cmd for cmd in calls if cmd[:3] == ["gh", "repo", "create"])
+    assert "--public" in create_call
+    assert "--private" not in create_call
 
 
 def test_bootstrap_blocks_secret_like_files_before_github_create(tmp_path: Path, monkeypatch, capsys) -> None:

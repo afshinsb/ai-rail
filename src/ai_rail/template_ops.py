@@ -330,6 +330,7 @@ def cmd_init(argv: list[str], ctx: TemplateContext) -> int:
     parser.add_argument("--adopt-dirty", action="store_true", help="Initialize and treat current dirty work as the intended baseline.")
     parser.add_argument("--clean-default", action="store_true", help="Refuse unless on the clean default branch.")
     parser.add_argument("--git-init", action="store_true", help="Create a local Git repo first when this folder is not already in one.")
+    parser.add_argument("--quiet-next", action="store_true", help=argparse.SUPPRESS)
     ns = parser.parse_args(argv)
 
     if sum(bool(value) for value in [ns.allow_dirty, ns.adopt_dirty, ns.clean_default]) > 1:
@@ -411,18 +412,19 @@ def cmd_init(argv: list[str], ctx: TemplateContext) -> int:
     print(f"Repository: {cfg.get('repository')}")
     print(f"Default branch: {cfg.get('default_branch')}")
     checks = cfg.get("checks") or []
-    print(f"Checks: {', '.join(checks) if checks else 'none'}")
+    print(f"Checks: {', '.join(checks) if checks else 'none detected'}")
     if config_preserved:
         print("Preserved config values: " + ", ".join(config_preserved))
     print_install_summary(summary)
-    print("\nNext:")
-    print("rail doctor")
-    print("rail status")
-    if ns.allow_dirty or ns.adopt_dirty or ns.git_init:
-        print_init_git_next_commands(inspection, adopt=ns.adopt_dirty or ns.git_init)
-    if not ctx.has_github_remote():
-        print("")
-        print_missing_github_remote_guidance()
+    if not ns.quiet_next:
+        print("\nNext:")
+        print("rail doctor")
+        print("rail status")
+        if ns.allow_dirty or ns.adopt_dirty or ns.git_init:
+            print_init_git_next_commands(inspection, adopt=ns.adopt_dirty or ns.git_init)
+        if not ctx.has_github_remote():
+            print("")
+            print_missing_github_remote_guidance()
     return 0
 
 
