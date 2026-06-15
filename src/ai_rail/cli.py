@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fnmatch
 import json
 import os
 import re
@@ -560,6 +561,104 @@ def print_no_github_remote_guidance() -> None:
     rail_print("rail github-create --public")
 
 
+BOOTSTRAP_SECRET_PATTERNS = [".env", ".env.local", ".env.*", "*.pem", "*.key"]
+
+
+def is_bootstrap_secret_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").strip("/")
+    name = Path(normalized).name
+    return any(fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(normalized, pattern) for pattern in BOOTSTRAP_SECRET_PATTERNS)
+
+
+def bootstrap_secret_paths(paths: list[str]) -> list[str]:
+    return sorted(path for path in paths if is_bootstrap_secret_path(path))
+
+
+def filesystem_bootstrap_secret_paths() -> list[str]:
+    found: list[str] = []
+    for path in root().rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(root())
+        except ValueError:
+            continue
+        parts = rel.parts
+        if ".git" in parts:
+            continue
+        rel_text = str(rel).replace("\\", "/")
+        if is_bootstrap_secret_path(rel_text):
+            found.append(rel_text)
+    return sorted(found)
+
+
+def print_bootstrap_secret_block(paths: list[str]) -> None:
+    rail_print(f"{rail_icon('error')} Bootstrap stopped because secrets-like files are present.")
+    for path in paths:
+        rail_print(f"- {path}")
+    rail_print(f"{rail_icon('tip')} Remove them from the repo, add safe examples instead, or add ignore rules before bootstrapping.")
+
+
+def git_commit_all(message: str, *, allow_empty: bool = False) -> int:
+    add = run(["git", "add", "-A"], timeout=60)
+    if add.returncode != 0:
+        rail_print(f"{rail_icon('error')} Could not stage files.")
+        if (add.stderr or add.stdout).strip():
+            rail_print((add.stderr or add.stdout).strip())
+        return add.returncode or 1
+    commit_cmd = ["git", "commit", "-m", message]
+    if allow_empty:
+        commit_cmd.insert(2, "--allow-empty")
+    commit = run(commit_cmd, timeout=120)
+    if commit.returncode != 0:
+        rail_print(f"{rail_icon('error')} Could not create commit.")
+        if (commit.stderr or commit.stdout).strip():
+            rail_print((commit.stderr or commit.stdout).strip())
+        return commit.returncode or 1
+    return 0
+
+
+def git_commit_paths(paths: list[str], message: str) -> int:
+    if not paths:
+        return 0
+    add = run(["git", "add", "--", *paths], timeout=60)
+    if add.returncode != 0:
+        rail_print(f"{rail_icon('error')} Could not stage Rail files.")
+        if (add.stderr or add.stdout).strip():
+            rail_print((add.stderr or add.stdout).strip())
+        return add.returncode or 1
+    commit = run(["git", "commit", "-m", message], timeout=120)
+    if commit.returncode != 0:
+        rail_print(f"{rail_icon('error')} Could not commit Rail files.")
+        if (commit.stderr or commit.stdout).strip():
+            rail_print((commit.stderr or commit.stdout).strip())
+        return commit.returncode or 1
+    return 0
+
+
+def detected_or_requested_repo(repo_arg: str | None, visibility_flag: str, command: str) -> str | None:
+    if repo_arg:
+        return repo_arg
+    owner = detected_github_owner()
+    if not owner:
+        rail_print(f"{rail_icon('error')} Could not detect your GitHub owner from `gh`.")
+        rail_print(f"{rail_icon('tip')} Rerun with: rail {command} {visibility_flag} --repo OWNER/PROJECT")
+        return None
+    return f"{owner}/{root().name}"
+
+
+def create_github_repo_and_push(repo: str, visibility_flag: str) -> tuple[int, str | None]:
+    create = run(["gh", "repo", "create", repo, visibility_flag, "--source", ".", "--remote", "origin", "--push"], timeout=120)
+    if create.returncode != 0:
+        rail_print(f"{rail_icon('error')} GitHub repo creation failed.")
+        message = (create.stderr or create.stdout).strip()
+        if message:
+            rail_print(message)
+        return create.returncode or 1, None
+    repo_url = create.stdout.strip() or create.stderr.strip() or git_remote_url("origin", run) or f"https://github.com/{repo}"
+    return 0, repo_url
+
+
 def cmd_github_create(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="rail github-create")
     visibility = parser.add_mutually_exclusive_group(required=True)
@@ -599,32 +698,121 @@ def cmd_github_create(argv: list[str]) -> int:
         rail_print('git commit -m "chore: initialize ai rail workflow"')
         return 1
 
-    repo = ns.repo
-    if not repo:
-        owner = detected_github_owner()
-        if not owner:
-            rail_print(f"{rail_icon('error')} Could not detect your GitHub owner from `gh`.")
-            rail_print(f"{rail_icon('tip')} Rerun with: rail github-create --private --repo OWNER/PROJECT")
-            return 1
-        repo = f"{owner}/{root().name}"
-
     visibility_flag = "--public" if ns.public else "--private"
+    repo = detected_or_requested_repo(ns.repo, visibility_flag, "github-create")
+    if not repo:
+        return 1
     branch = current_branch()
-    create = run(["gh", "repo", "create", repo, visibility_flag, "--source", ".", "--remote", "origin", "--push"], timeout=120)
-    if create.returncode != 0:
-        rail_print(f"{rail_icon('error')} GitHub repo creation failed.")
-        message = (create.stderr or create.stdout).strip()
-        if message:
-            rail_print(message)
-        return create.returncode or 1
-
-    repo_url = create.stdout.strip() or create.stderr.strip()
-    if not repo_url:
-        repo_url = git_remote_url("origin", run) or f"https://github.com/{repo}"
+    rc, repo_url = create_github_repo_and_push(repo, visibility_flag)
+    if rc != 0:
+        return rc
     rail_print(f"{rail_icon('success')} GitHub repo created and pushed from `{branch}`.")
     rail_print(f"{rail_icon('context')} Repo: {repo_url}")
     rail_print(f"{rail_icon('tip')} Next:")
     rail_print("rail init --clean-default")
+    return 0
+
+
+def cmd_bootstrap(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="rail bootstrap")
+    visibility = parser.add_mutually_exclusive_group(required=True)
+    visibility.add_argument("--private", action="store_true", help="Create a private GitHub repo.")
+    visibility.add_argument("--public", action="store_true", help="Create a public GitHub repo.")
+    parser.add_argument("--repo", help="Explicit OWNER/PROJECT repo name. Defaults to the gh user and folder name.")
+    parser.add_argument("--stack", choices=["node", "python", "static"], default="node")
+    parser.add_argument("--project-name")
+    ns = parser.parse_args(argv)
+
+    if not gh_available():
+        rail_print(f"{rail_icon('error')} GitHub CLI `gh` is required for rail bootstrap.")
+        rail_print(f"{rail_icon('tip')} Install and authenticate `gh`, then rerun this command.")
+        return 1
+    if not shutil.which("git"):
+        rail_print(f"{rail_icon('error')} Git is required for rail bootstrap.")
+        return 1
+
+    created_repo = False
+    if not is_inside_work_tree():
+        if has_git_dir():
+            rail_print(f"{rail_icon('error')} AI Rail found Git metadata, but this is not a healthy Git work tree.")
+            rail_print(f"{rail_icon('tip')} Run: git status --short")
+            return 1
+        result = run_git_init_main()
+        if result.returncode != 0:
+            rail_print(f"{rail_icon('error')} Could not create a local Git repo.")
+            rail_print(f"{rail_icon('tip')} Try manually: git init -b main")
+            return result.returncode or 1
+        created_repo = True
+        rail_print(f"{rail_icon('success')} Created local Git repo on branch main.")
+
+    state = git_safety_preflight()
+    if git_state_blocks_new_work(state):
+        print_git_state_blocked("bootstrap", state)
+        return 1
+
+    existing_origin = git_remote_url("origin", run)
+    if existing_origin:
+        rail_print(f"{rail_icon('error')} origin already exists.")
+        rail_print(f"{rail_icon('context')} Current origin: {existing_origin}")
+        rail_print(f"{rail_icon('tip')} Bootstrap will not overwrite an existing remote.")
+        return 1
+
+    secret_paths = filesystem_bootstrap_secret_paths()
+    if secret_paths:
+        print_bootstrap_secret_block(secret_paths)
+        return 1
+
+    if not has_baseline_commit():
+        paths = changed_files()
+        rc = git_commit_all("chore: initial project baseline", allow_empty=True)
+        if rc != 0:
+            return rc
+        rail_print(f"{rail_icon('success')} Created initial project baseline commit.")
+    else:
+        existing_changes = [path for path in changed_files() if path]
+        if existing_changes:
+            secret_paths = bootstrap_secret_paths(existing_changes)
+            if secret_paths:
+                print_bootstrap_secret_block(secret_paths)
+                return 1
+            rail_print(f"{rail_icon('error')} Bootstrap needs a clean work tree before it adds Rail files.")
+            rail_print(f"{rail_icon('tip')} Commit or stash existing changes, then rerun rail bootstrap.")
+            return 1
+
+    init_args = ["--stack", ns.stack, "--clean-default"]
+    if ns.project_name:
+        init_args.extend(["--project-name", ns.project_name])
+    rc = cmd_init(init_args)
+    if rc != 0:
+        return rc
+
+    rail_changes = [
+        path for path in changed_files()
+        if path == "Makefile" or path == ".rail" or path.startswith(".rail/")
+    ]
+    secret_paths = bootstrap_secret_paths(rail_changes)
+    if secret_paths:
+        print_bootstrap_secret_block(secret_paths)
+        return 1
+    if rail_changes:
+        rc = git_commit_paths(rail_changes, "chore: initialize ai rail workflow")
+        if rc != 0:
+            return rc
+        rail_print(f"{rail_icon('success')} Committed AI Rail workflow files.")
+
+    visibility_flag = "--public" if ns.public else "--private"
+    repo = detected_or_requested_repo(ns.repo, visibility_flag, "bootstrap")
+    if not repo:
+        return 1
+    branch = current_branch()
+    rc, repo_url = create_github_repo_and_push(repo, visibility_flag)
+    if rc != 0:
+        return rc
+    rail_print(f"{rail_icon('success')} Bootstrap complete.")
+    rail_print(f"{rail_icon('context')} Repo: {repo_url}")
+    rail_print(f"{rail_icon('context')} Branch pushed: {branch}")
+    if created_repo:
+        rail_print(f"{rail_icon('context')} Local Git repo was created by Rail.")
     return 0
 
 
@@ -1646,7 +1834,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"AI Rail {VERSION}")
             print("Daily: init, resume, plan, import, phase, next, handoff, verify, ship, snapshot, export")
             print("Aliases: r, n, p, ph, im, v, s, snap, h, hc, hg, hl, x, xd, xf, rc")
-            print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, clear-active, sync, log, report, github-create, ci-init, upgrade, about, demo, release-check")
+            print("Advanced: doctor, status, start, prompt, patch, review, checks, commit, issue-close, done, clear-active, sync, log, report, github-create, bootstrap, ci-init, upgrade, about, demo, release-check")
             return 0
         if argv[0] in {"--version", "version"}:
             print(render_version(), end="")
@@ -1662,6 +1850,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_doctor(rest)
         if cmd == "github-create":
             return cmd_github_create(rest)
+        if cmd == "bootstrap":
+            return cmd_bootstrap(rest)
         if cmd in {"status", "active", "resume"}:
             return cmd_status(rest)
         if cmd == "next":

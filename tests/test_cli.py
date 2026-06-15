@@ -157,8 +157,14 @@ def test_init_outside_git_repo_prints_friendly_guidance(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "AI Rail needs a Git repository." in output
     assert "Current folder is not inside a Git repo." in output
-    assert "git init -b main" in output
+    assert "Local setup only:" in output
     assert "rail init --git-init" in output
+    assert "Full setup:" in output
+    assert "rail bootstrap --private" in output
+    assert "rail bootstrap --public" in output
+    assert "Manual setup:" in output
+    assert "git init -b main" in output
+    assert "gh repo create OWNER/PROJECT --private --source . --remote origin --push" in output
     assert "fatal:" not in output.lower()
 
 
@@ -200,6 +206,14 @@ def test_doctor_in_git_repo_without_origin_prints_remote_guidance(tmp_path: Path
 def test_github_create_requires_explicit_visibility(tmp_path: Path) -> None:
     git_init(tmp_path)
     result = run_cli(tmp_path, "github-create")
+
+    assert result.returncode != 0
+    assert "--private" in result.stderr
+    assert "--public" in result.stderr
+
+
+def test_bootstrap_requires_explicit_visibility(tmp_path: Path) -> None:
+    result = run_cli(tmp_path, "bootstrap")
 
     assert result.returncode != 0
     assert "--private" in result.stderr
@@ -254,6 +268,108 @@ def test_github_create_private_creates_repo_and_pushes(tmp_path: Path, monkeypat
     assert "--private" in calls[1]
     assert "--public" not in calls[1]
     assert calls[1][-5:] == ["--source", ".", "--remote", "origin", "--push"]
+
+
+def test_bootstrap_private_creates_baseline_initializes_rail_and_pushes(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    sys.path.insert(0, str(ROOT / "src"))
+    import ai_rail.cli as cli
+
+    real_run = cli.run
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["gh", "api", "user"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "test-owner\n", "")
+        if cmd[:3] == ["gh", "repo", "create"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, f"https://github.com/{cmd[3]}\n", "")
+        if cmd[:3] == ["gh", "repo", "view"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "not found")
+        return real_run(cmd, timeout)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "Tester")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "Tester")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@example.com")
+    monkeypatch.setattr(cli, "gh_available", lambda: True)
+    monkeypatch.setattr(cli, "run", fake_run)
+
+    result = cli.cmd_bootstrap(["--private", "--stack", "static", "--project-name", "Demo"])
+
+    assert result == 0
+    assert (tmp_path / ".git").exists()
+    assert (tmp_path / ".rail" / "rail.py").exists()
+    log = subprocess.run(["git", "log", "--format=%s"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert "chore: initial project baseline" in log.stdout
+    assert "chore: initialize ai rail workflow" in log.stdout
+    assert calls[-1][:4] == ["gh", "repo", "create", f"test-owner/{tmp_path.name}"]
+    assert "--private" in calls[-1]
+    assert "--public" not in calls[-1]
+    assert calls[-1][-5:] == ["--source", ".", "--remote", "origin", "--push"]
+
+
+def test_bootstrap_public_is_explicit(tmp_path: Path, monkeypatch) -> None:
+    git_init(tmp_path)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "baseline"], cwd=tmp_path, capture_output=True, text=True, check=True)
+    sys.path.insert(0, str(ROOT / "src"))
+    import ai_rail.cli as cli
+
+    real_run = cli.run
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        if cmd[:3] == ["gh", "api", "user"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "test-owner\n", "")
+        if cmd[:3] == ["gh", "repo", "create"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, f"https://github.com/{cmd[3]}\n", "")
+        if cmd[:3] == ["gh", "repo", "view"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "not found")
+        return real_run(cmd, timeout)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "gh_available", lambda: True)
+    monkeypatch.setattr(cli, "run", fake_run)
+
+    result = cli.cmd_bootstrap(["--public", "--stack", "static"])
+
+    assert result == 0
+    assert "--public" in calls[-1]
+    assert "--private" not in calls[-1]
+
+
+def test_bootstrap_blocks_secret_like_files_before_github_create(tmp_path: Path, monkeypatch, capsys) -> None:
+    (tmp_path / ".env.local").write_text("TOKEN=secret\n", encoding="utf-8")
+    sys.path.insert(0, str(ROOT / "src"))
+    import ai_rail.cli as cli
+
+    real_run = cli.run
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["gh", "repo"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["gh", "api"]:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "test-owner\n", "")
+        return real_run(cmd, timeout)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "gh_available", lambda: True)
+    monkeypatch.setattr(cli, "run", fake_run)
+
+    result = cli.cmd_bootstrap(["--private"])
+    output = capsys.readouterr().out
+
+    assert result == 1
+    assert "secrets-like files" in output
+    assert ".env.local" in output
+    assert not any(cmd[:3] == ["gh", "repo", "create"] for cmd in calls)
 
 
 def test_init_creates_node_config_with_fallback_check(tmp_path: Path) -> None:

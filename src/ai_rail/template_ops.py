@@ -222,13 +222,19 @@ def print_init_git_next_commands(inspection: dict[str, Any], *, adopt: bool = Fa
 def print_missing_git_repo_guidance() -> None:
     print(f"{init_icon('error')} AI Rail needs a Git repository.")
     print(f"{init_icon('branch')} Current folder is not inside a Git repo.")
-    print(f"{init_icon('tip')} Recommended:")
+    print(f"{init_icon('tip')} Local setup only:")
+    print("rail init --git-init")
+    print(f"{init_icon('branch')} Local setup = create local Git repo and initialize Rail. No GitHub repo.")
+    print(f"{init_icon('tip')} Full setup:")
+    print("rail bootstrap --private")
+    print("rail bootstrap --public")
+    print(f"{init_icon('branch')} Full setup = create local Git repo, commit baseline, initialize Rail, create GitHub repo, push.")
+    print(f"{init_icon('tip')} Manual setup:")
     print("git init -b main")
     print("git add -A")
     print('git commit -m "chore: initial project baseline"')
+    print("gh repo create OWNER/PROJECT --private --source . --remote origin --push")
     print("rail init --clean-default")
-    print(f"{init_icon('tip')} Or let Rail create the local repo:")
-    print("rail init --git-init")
 
 
 def print_missing_github_remote_guidance() -> None:
