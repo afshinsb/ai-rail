@@ -259,6 +259,15 @@ The GitHub roadmap issue is the remote roadmap mirror.
 AI/planning agents create and update the roadmap.
 AI Rail imports roadmap memory and tracks completed issue state.
 
+## Workflow notes
+
+- `rail plan` creates/updates the GitHub roadmap mirror and active-slice task issues; it does not implement code.
+- `rail import` imports the roadmap mirror issue into local `.rail/PROJECT.md`.
+- `rail n` selects one normal task issue for coding-agent work.
+- `rail v` creates the review/verification pack after coding-agent work.
+- `rail ship` / `rail s` ships one completed task safely and may close only the normal task issue.
+- `rail doctor` / `rail status` are diagnostics only.
+
 {LOCAL_ROADMAP_START}
 
 {managed.strip()}
@@ -290,6 +299,13 @@ def is_placeholder_project_memory(text: str) -> bool:
         "The GitHub roadmap issue is the remote roadmap mirror.",
         "AI/planning agents create and update the roadmap.",
         "AI Rail imports roadmap memory and tracks completed issue state.",
+        "## Workflow notes",
+        "- `rail plan` creates/updates the GitHub roadmap mirror and active-slice task issues; it does not implement code.",
+        "- `rail import` imports the roadmap mirror issue into local `.rail/PROJECT.md`.",
+        "- `rail n` selects one normal task issue for coding-agent work.",
+        "- `rail v` creates the review/verification pack after coding-agent work.",
+        "- `rail ship` / `rail s` ships one completed task safely and may close only the normal task issue.",
+        "- `rail doctor` / `rail status` are diagnostics only.",
         "## Product notes",
         "CHANGE_ME: What does this project do?",
         "## Stack",

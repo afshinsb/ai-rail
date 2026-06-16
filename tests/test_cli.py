@@ -877,6 +877,10 @@ def test_project_template_defines_local_project_memory() -> None:
     assert "AI RAIL ROADMAP START" in text
     assert "- [ ] P1-T01 | TBD |" in text
     assert "Status: active" in text
+    assert "## Workflow notes" in text
+    assert "`rail plan` creates/updates the GitHub roadmap mirror" in text
+    strict_block = text.split("<!-- AI RAIL ROADMAP START -->", 1)[1].split("<!-- AI RAIL ROADMAP END -->", 1)[0]
+    assert "Workflow notes" not in strict_block
     assert "## Roadmap maintenance rules" in text
     assert "Do not create `.rail/ROADMAP.md`" in text
 
@@ -995,8 +999,20 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     result = run_cli(tmp_path, "plan")
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "Project: Road Demo" in result.stdout
-    assert "Repository: owner/road-demo" in result.stdout
+    assert "Project name: `Road Demo`" in result.stdout
+    assert "Repository: `owner/road-demo`" in result.stdout
+    assert "CANONICAL NAMES - DO NOT DRIFT" in result.stdout
+    assert "AI RAIL OPERATING MODEL" in result.stdout
+    assert "Roadmap issue title: `Roadmap: Road Demo functional MVP`" in result.stdout
+    assert "Roadmap label: `ai-rail-roadmap`" in result.stdout
+    assert "Task label: `ai-rail-task`" in result.stdout
+    assert "Task title format: `P1-T01: Short task title`" in result.stdout
+    assert "Normal task issues must never have `ai-rail-roadmap`." in result.stdout
+    assert "Never rename a task issue to the roadmap title." in result.stdout
+    assert "If an issue has both `ai-rail-task` and `ai-rail-roadmap`, treat it as label drift" in result.stdout
+    assert "Create/update exactly one roadmap mirror issue." in result.stdout
+    assert "Create only active-slice task issues." in result.stdout
+    assert "Update the roadmap mirror again with final `#N` refs." in result.stdout
     assert "`.rail/PROJECT.md`" in result.stdout
     assert "local project memory" in result.stdout
     assert "AI RAIL PROJECT MEMORY START" in result.stdout
@@ -1020,6 +1036,9 @@ def test_plan_prints_planning_prompt_without_active_issue(tmp_path: Path) -> Non
     assert "Close only normal implementation task issues" in result.stdout
     assert "usually 3-10 right-sized implementation issues" in result.stdout
     assert "do not create GitHub issues for the entire long-term roadmap" in result.stdout
+    assert "label every normal task issue `ai-rail-task`" in result.stdout
+    assert "never label a normal task issue `ai-rail-roadmap`" in result.stdout
+    assert "title every normal task issue with the task ID prefix" in result.stdout
     assert "## Goal" in result.stdout
     assert "## Current problem" in result.stdout
     assert "## Scope" in result.stdout
@@ -1043,7 +1062,7 @@ def test_plan_copy_does_not_crash_without_active_issue(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "GitHub-connected planning agent" in result.stdout
-    assert "Repository: not configured" in result.stdout
+    assert "Repository: `not configured`" in result.stdout
     assert "STOP: Repository is not configured." in result.stdout
     assert "Do not create or update GitHub issues yet." in result.stdout
     assert "run `rail init --refresh-config`" in result.stdout

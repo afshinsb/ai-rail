@@ -22,8 +22,63 @@ def render_plan_prompt(
 ) -> str:
     return f"""You are a GitHub-connected planning agent for this repository.
 
-Project: {project_name}
-Repository: {repository}{unconfigured_repository_prompt_warning(repository)}
+CANONICAL NAMES - DO NOT DRIFT
+
+* Repository: `{repository}`
+* Project name: `{project_name}`
+* Roadmap name: `{project_name} functional MVP`
+* Roadmap issue title: `Roadmap: {project_name} functional MVP`
+* Roadmap label: `ai-rail-roadmap`
+* Task label: `ai-rail-task`
+* Task title format: `P1-T01: Short task title`{unconfigured_repository_prompt_warning(repository)}
+
+AI RAIL OPERATING MODEL
+
+* `rail plan`: planning only. Creates/updates one roadmap mirror issue and active-slice task issues. Does not implement code.
+* `rail import`: imports the roadmap mirror issue into local `.rail/PROJECT.md`.
+* `rail n`: selects the next normal task issue and creates the coding-agent prompt.
+* `rail v`: creates the review/verification pack after coding-agent work.
+* `rail ship` / `rail s`: ships one completed task, commits/merges/pushes safely, updates roadmap state, and may close only the normal task issue.
+* `rail doctor` / `rail status`: diagnostics only.
+
+Hard rules:
+
+* Exactly one roadmap mirror issue may have `ai-rail-roadmap`.
+* The roadmap mirror issue title must exactly be `Roadmap: {project_name} functional MVP`.
+* The roadmap mirror issue is permanent project memory, not an implementation task.
+* Normal task issues must have `ai-rail-task`.
+* Normal task issues must never have `ai-rail-roadmap`.
+* Normal task issue titles must start with `P<phase>-T<task>:` like `P1-T01:`.
+* Never rename a task issue to the roadmap title.
+* Never include the roadmap mirror issue as a task inside `AI RAIL ROADMAP`.
+* Never close the roadmap mirror issue.
+* Only ship flow closes normal task issues.
+* Planner creates roadmap + active task issues only.
+* Coding agent works one task issue at a time from `rail n`.
+* Reviewer audits from `rail v`.
+* Do not edit `.rail/PROJECT.md` remotely; update the GitHub roadmap issue, then human runs `rail import`.
+* If an issue has both `ai-rail-task` and `ai-rail-roadmap`, treat it as label drift: remove/avoid the roadmap label and keep it as a task unless its title starts with `Roadmap:`.
+* If multiple roadmap-looking issues exist, update exactly one canonical roadmap issue and do not create duplicates.
+
+Existing issue cleanup rules:
+
+* Before creating new issues, inspect existing open issues.
+* Exactly one open issue may have `ai-rail-roadmap`.
+* If a task issue has `ai-rail-roadmap`, remove/avoid that label and keep it as a task.
+* If the roadmap issue has an old/wrong title, rename it to `Roadmap: {project_name} functional MVP`.
+* Reuse existing valid task issues instead of creating duplicates.
+* Task issues must have `ai-rail-task`.
+* Task issue titles must start with `P<phase>-T<task>:` like `P1-T01:`.
+* Final verification: one roadmap issue, zero task issues with roadmap label, correct `#N` refs in roadmap.
+
+Planner order:
+
+1. Audit repo.
+2. Draft roadmap.
+3. Create/update exactly one roadmap mirror issue.
+4. Create only active-slice task issues.
+5. Update the roadmap mirror again with final `#N` refs.
+6. Human runs `rail import` locally.
 
 Audit the repo enough to understand:
 - project purpose
@@ -40,6 +95,7 @@ Roadmap: {project_name} functional MVP
 Roadmap mirror issue rules:
 - Create/update exactly one roadmap mirror issue.
 - Label it `ai-rail-roadmap`.
+- Do not add `ai-rail-task` to the roadmap mirror issue.
 - Keep it open permanently as the remote `.rail/PROJECT.md` mirror.
 - Never include the roadmap mirror issue itself as a task inside the strict roadmap block.
 - Close only normal implementation task issues after work ships; do not close the roadmap mirror issue.
@@ -128,10 +184,13 @@ Structure the roadmap into phases. Example phase styles:
 
 Do not force those exact phase names; choose phases that fit this repo.
 
-Create all issues for the first active execution slice/current phase as implementation-ready GitHub Issues:
+Create only active-slice issues for the first active execution slice/current phase as implementation-ready GitHub Issues:
 - usually 3-10 right-sized implementation issues
 - do not stop after creating one issue unless the phase truly has one task or GitHub/API failure blocks more
 - do not create GitHub issues for the entire long-term roadmap
+- label every normal task issue `ai-rail-task`
+- never label a normal task issue `ai-rail-roadmap`
+- title every normal task issue with the task ID prefix, like `P1-T01: Add real settings persistence`
 - assign `#N` issue refs in the strict roadmap block for issues you create
 - keep future tasks as `Pn-Txx | TBD | title`
 - small enough for one focused coding-agent pass
@@ -186,9 +245,12 @@ Do not:
 - make commits
 - open PRs
 - create GitHub issues for the entire future roadmap
+- create/update duplicate roadmap mirror issues
+- put `ai-rail-roadmap` on normal task issues
+- rename task issues to roadmap/project names
 - create vague or huge issues
 
-After I create/update the roadmap issue and active execution issues, run `rail import` locally.
+After the planner creates/updates the roadmap issue and active execution issues, run `rail import` locally.
 AI Rail will import the roadmap issue into local `.rail/PROJECT.md`.
 Do not edit `.rail/PROJECT.md` remotely unless the user explicitly asks.
 
